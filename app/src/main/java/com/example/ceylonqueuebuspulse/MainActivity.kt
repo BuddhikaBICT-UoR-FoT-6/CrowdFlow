@@ -4,13 +4,19 @@
 // Kotlin
 package com.example.ceylonqueuebuspulse
 
-// Android framework imports for Activity and lifecycle
+// Location handling - 2025-12-28
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
 
-// Compose UI building blocks and runtime state helpers
+// Compose UI
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,62 +24,93 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 
-// App theme import to style the UI consistently
+// Theme + ViewModel
 import com.example.ceylonqueuebuspulse.ui.theme.CeylonQueueBusPulseTheme
-
-// ViewModelProvider to obtain a ViewModel tied to Activity lifecycle
-import androidx.lifecycle.ViewModelProvider
 import com.example.ceylonqueuebuspulse.ui.TrafficViewModel
+
+// Google Play Services Location APIs
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 
 // Entry point Activity. Hosts the Compose UI and connects it to the ViewModel.
 class MainActivity : ComponentActivity() {
-    // onCreate: Activity lifecycle callback where we initialize UI content
+
+    // ViewModel scoped to the Activity lifecycle
+    private val viewModel: TrafficViewModel by viewModels()
+
+    // Fused Location state
+    private lateinit var fusedClient: FusedLocationProviderClient
+    private lateinit var locationRequest: LocationRequest
+    private var locationCallback: LocationCallback? = null
+
+    // Runtime permission launcher for fine/coarse location (multiple permissions)
+    private val locationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            val fineGranted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true
+            val coarseGranted = grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+            if (fineGranted || coarseGranted) {
+                startLocationUpdates()
+            } else {
+                // Clear any previous error; you might also surface a snack/toast
+                viewModel.clearError()
+            }
+        }
+
+    // Lifecycle: initialize location and compose UI
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Enables drawing under system bars and handles insets for modern UI
+        // Draw content edge-to-edge under system bars
         enableEdgeToEdge()
 
-        // Obtain ViewModel at the Activity scope to avoid Compose-specific import issues
-        // This ensures the ViewModel survives configuration changes
-        val vm: TrafficViewModel = ViewModelProvider(this)[TrafficViewModel::class.java]
+        // Initialize fused location client and request configuration
+        fusedClient = LocationServices.getFusedLocationProviderClient(this)
+        locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
+            .setMinUpdateIntervalMillis(2000L)
+            .setMaxUpdateDelayMillis(10000L)
+            .build()
 
-        // setContent: Start Compose rendering and declare the UI tree
+        // Check/ask permissions and start streaming if allowed
+        ensureLocationPermissionAndStart()
+
+        // Compose UI content
         setContent {
-            // Apply app theme to Material components
             CeylonQueueBusPulseTheme {
-                // Collect the UI state Flow from the ViewModel into Compose state
-                // 'by' delegates to recompose when the Flow emits updates
-                val state by vm.uiState.collectAsState()
+                // Observe ViewModel UI state; recomposes on changes
+                val state by viewModel.uiState.collectAsState()
 
-                // Scaffold provides basic Material layout structure (top bars, content, etc.)
+                // Base Material structure
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    // Column arranges children vertically
+                    // Vertical layout
                     Column(
                         modifier = Modifier
-                            .padding(innerPadding) // Respect system bars and Scaffold paddings
+                            .padding(innerPadding)
                             .fillMaxSize()
                     ) {
-                        // Title text for the screen
+                        // Screen title
                         Text(
                             text = "Bus Traffic Updates",
                             style = MaterialTheme.typography.titleLarge
                         )
 
-                        // Small vertical space between header and content
+                        // Spacing
                         Spacer(Modifier.height(8.dp))
 
-                        // Render each traffic report as a simple text line
+                        // List current traffic reports
                         state.reports.forEach { report ->
                             Text(
                                 text = "Route: ${report.routeId} | Severity: ${report.severity} | Points: ${report.segment.size}"
                             )
                         }
 
-                        // Extra spacing before the action button
+                        // More spacing
                         Spacer(Modifier.height(16.dp))
 
-                        // Button to submit a sample user location update (Colombo coordinates)
-                        Button(onClick = { vm.submitUserLocation(6.9271, 79.8612, "route-1") }) {
+                        // Sample action to submit a fixed location (Colombo)
+                        Button(onClick = { viewModel.submitUserLocation(6.9271, 79.8612, "route-1") }) {
                             Text("Submit Sample User Update (Colombo)")
                         }
                     }
@@ -81,9 +118,70 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    // Ensure permissions are granted; if not, request them
+    private fun ensureLocationPermissionAndStart() {
+        val fineGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (fineGranted || coarseGranted) {
+            startLocationUpdates()
+        } else {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
+    }
+
+    // Begin receiving fused location updates and forward to ViewModel
+    @SuppressLint("MissingPermission")
+    private fun startLocationUpdates() {
+        // Avoid duplicate registration
+        if (locationCallback != null) return
+
+        // Handle incoming location batches
+        locationCallback = object : LocationCallback() {
+            override fun onLocationResult(result: LocationResult) {
+                val loc = result.lastLocation ?: return
+                val routeId = "route-1" // TODO: map to real route selection
+                viewModel.submitUserLocation(loc.latitude, loc.longitude, routeId)
+            }
+        }
+
+        fusedClient.requestLocationUpdates(
+            locationRequest,
+            locationCallback as LocationCallback,
+            mainLooper
+        )
+    }
+
+    // Stop receiving updates to conserve battery/resources
+    private fun stopLocationUpdates() {
+        locationCallback?.let { fusedClient.removeLocationUpdates(it) }
+        locationCallback = null
+    }
+
+    // Resume: re-verify permission and restart updates
+    override fun onResume() {
+        super.onResume()
+        ensureLocationPermissionAndStart()
+    }
+
+    // Pause: stop updates while in background
+    override fun onPause() {
+        super.onPause()
+        stopLocationUpdates()
+    }
 }
 
-// Preview composable for Android Studio to render a design-time snapshot of the UI
+// Preview composable for design-time rendering in Android Studio
 @Preview(showBackground = true)
 @Composable
 fun AppPreview() {
