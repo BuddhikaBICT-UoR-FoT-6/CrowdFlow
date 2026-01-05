@@ -40,7 +40,11 @@ import com.google.android.gms.location.Priority
 class MainActivity : ComponentActivity() {
 
     // ViewModel scoped to the Activity lifecycle
-    private val viewModel: TrafficViewModel by viewModels()
+    // Kotlin
+    private val viewModel: TrafficViewModel by viewModels {
+        com.example.ceylonqueuebuspulse.di.TrafficViewModelFactory(application)
+    }
+
 
     // Fused Location state
     private lateinit var fusedClient: FusedLocationProviderClient
@@ -145,6 +149,15 @@ class MainActivity : ComponentActivity() {
     private fun startLocationUpdates() {
         // Avoid duplicate registration
         if (locationCallback != null) return
+
+        // Extra guard: ensure we still have permission at call time to avoid SecurityException
+        val fineGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarseGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!fineGranted && !coarseGranted) return
 
         // Handle incoming location batches
         locationCallback = object : LocationCallback() {
