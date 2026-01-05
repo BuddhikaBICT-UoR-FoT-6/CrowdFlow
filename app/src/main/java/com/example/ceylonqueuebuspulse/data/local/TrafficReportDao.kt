@@ -46,4 +46,8 @@ interface TrafficReportDao {
      */
     @Query("DELETE FROM traffic_reports")
     suspend fun clearAll()
+
+    /** Convenience method for syncing remote data: replace existing rows for matching primary keys. */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(reports: List<TrafficReportEntity>)
 }

@@ -3,13 +3,26 @@
 //          and exposes a Flow<List<TrafficReport>> for UI/ViewModel consumption. Includes seeding
 //          and user update submission with clear documentation.
 
-package com.example.ceylonqueuebuspulse.data
+package com.example.ceylonqueuebuspulse.data.repository
 
-// Reactive streams
+// Domain models and helpers
+import com.example.ceylonqueuebuspulse.data.LatLng
+import com.example.ceylonqueuebuspulse.data.TrafficReport
+import com.example.ceylonqueuebuspulse.data.TrafficSource
+import com.example.ceylonqueuebuspulse.data.UserLocationUpdate
+
+// Coroutines + Flow
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 
-// Room DAO + entity
+// Networking (Phase 2; optional during offline prototyping)
+import com.example.ceylonqueuebuspulse.data.network.RetrofitProvider
+import com.example.ceylonqueuebuspulse.data.network.model.TrafficReportDto
+
+// Room DAO + entity (Phase 1 persistence layer)
 import com.example.ceylonqueuebuspulse.data.local.TrafficReportDao
 import com.example.ceylonqueuebuspulse.data.local.TrafficReportEntity
 
@@ -23,31 +36,36 @@ import com.example.ceylonqueuebuspulse.data.local.TrafficReportEntity
  */
 class TrafficRepository(
     // DAO dependency; provided by the Room database.
-    private val dao: TrafficReportDao
+    private val dao: TrafficReportDao,
+    // IO dispatcher for Room and network work.
+    private val io: CoroutineDispatcher = Dispatchers.IO
 ) {
 
     // Stream of domain models consumed by ViewModel/UI. Mapping preserves reactivity from Room.
     val reports: Flow<List<TrafficReport>> =
         dao.observeReports().map { entities -> entities.map { it.toDomain() } }
 
+    // Expose Room flow directly if needed elsewhere (legacy usage).
+    fun observeReports(): Flow<List<TrafficReportEntity>> = dao.observeReports()
+
     /**
-     * Replaces all existing reports with the provided historical samples.
+     * Replace all existing reports with the provided historical samples.
      * Typically used during bootstrap or periodic data refresh.
      */
-    suspend fun seedHistoricalData(sample: List<TrafficReport>) {
+    suspend fun seedHistoricalData(sample: List<TrafficReport>) = withContext(io) {
         val entities = sample.map { it.toEntity() }
         dao.clearAll()
         dao.insertReports(entities)
     }
 
     /**
-     * Converts a user location update into a traffic report and persists it.
+     * Convert a user location update into a traffic report and persist it.
      *
      * Notes:
      * - Route mapping is currently naive: falls back to "unknown" when routeId is null.
      * - Severity is a placeholder heuristic and can be replaced with a smarter algorithm.
      */
-    suspend fun submitUserUpdate(update: UserLocationUpdate) {
+    suspend fun submitUserUpdate(update: UserLocationUpdate) = withContext(io) {
         // Construct a minimal domain report from the user's location
         val report = TrafficReport(
             id = "user-${update.id}",
@@ -66,13 +84,20 @@ class TrafficRepository(
         dao.insertReport(report.toEntity())
     }
 
+    // Fetch from backend and merge into Room (upsert semantics). Optional until backend live.
+    suspend fun sync(city: String? = null) = withContext(io) {
+        val remote: List<TrafficReportDto> = RetrofitProvider.api.getReports(city)
+        val entities = remote.map { it.toEntity() }
+        dao.upsertAll(entities)
+    }
+
     // --- Mapping helpers: Entity <-> Domain ---
 
     /** Maps a persistence entity into a domain model. */
     private fun TrafficReportEntity.toDomain(): TrafficReport {
         // NOTE: Current entity schema does not store path segments; default to empty list.
         return TrafficReport(
-            id = id.toString(),
+            id = id.toString(), // convert auto-generated Long id to String for domain
             routeId = routeId,
             severity = severity,
             source = TrafficSource.valueOf(source),
@@ -84,7 +109,7 @@ class TrafficRepository(
 
     /** Maps a domain model into a persistence entity. */
     private fun TrafficReport.toEntity(): TrafficReportEntity {
-        // NOTE: Current entity schema does not persist segments; only basic fields are stored.
+        // NOTE: Do not pass domain id into entity; Room auto-generates Long PK.
         return TrafficReportEntity(
             routeId = routeId,
             severity = severity,
@@ -93,4 +118,13 @@ class TrafficRepository(
             timestampMs = timestamp
         )
     }
+
+    /** Map DTO (remote) into local Room entity. */
+    private fun TrafficReportDto.toEntity(): TrafficReportEntity =
+        TrafficReportEntity(
+            routeId = route,
+            severity = severity,
+            source = "HISTORICAL", // or derive from DTO if available
+            timestampMs = updatedAt
+        )
 }

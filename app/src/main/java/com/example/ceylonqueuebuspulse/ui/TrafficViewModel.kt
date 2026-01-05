@@ -4,7 +4,7 @@ package com.example.ceylonqueuebuspulse.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.ceylonqueuebuspulse.data.TrafficRepository
+import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
 import com.example.ceylonqueuebuspulse.data.TrafficReport
 import com.example.ceylonqueuebuspulse.data.UserLocationUpdate
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -105,6 +105,11 @@ class TrafficViewModel(
                 )
             }
         }
+    }
+
+    /** Trigger remote sync (Phase 2) and persist results through repository. */
+    fun refresh(city: String? = null) {
+        viewModelScope.launch { repository.sync(city) }
     }
 
     /** Clears the current error message from the UI state. */

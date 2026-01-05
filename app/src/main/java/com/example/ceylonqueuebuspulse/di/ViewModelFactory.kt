@@ -6,7 +6,7 @@ package com.example.ceylonqueuebuspulse.di
 import android.app.Application
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import com.example.ceylonqueuebuspulse.data.TrafficRepository
+import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
 import com.example.ceylonqueuebuspulse.data.local.AppDatabase
 import com.example.ceylonqueuebuspulse.ui.TrafficViewModel
 
