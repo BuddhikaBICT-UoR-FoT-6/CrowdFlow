@@ -20,6 +20,10 @@ data class UiState(
     val reports: List<TrafficReport> = emptyList(),
     // True while seeding or submitting updates; allows showing a progress indicator
     val isLoading: Boolean = false,
-    // Non-null when an error occurred; render and provide a way to dismiss/reset
-    val errorMessage: String? = null
+    // Optional error message to surface to the user when operations fail
+    val errorMessage: String? = null,
+    // NEW (Phase 3): indicates if a background/foreground sync is in progress
+    val isSyncing: Boolean = false,
+    // NEW (Phase 3): last successful data refresh time (epoch millis) for UI display
+    val lastUpdatedMs: Long? = null
 )

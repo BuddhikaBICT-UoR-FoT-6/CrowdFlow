@@ -51,10 +51,9 @@ dependencies {
     // Activity Compose
     implementation(libs.androidx.activity.compose)
 
-    // Lifecycle + ViewModel for Compose (keep explicit versions if not in catalog)
+    // Lifecycle + ViewModel for Compose
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    // ViewModel Compose not in catalog file; keep direct coordinate for now
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
 
     // Coroutines (not in catalog):
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
@@ -71,4 +70,7 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-moshi:2.11.0")
     implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
+
+    // WorkManager for background sync tasks (Phase 3 Remote Sync)
+    implementation(libs.androidx.work.runtime.ktx)
 }

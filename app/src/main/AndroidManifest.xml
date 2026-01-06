@@ -7,6 +7,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.ceylonqueuebuspulse">
 
+    <!-- Network permissions for Retrofit/WorkManager sync -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -31,6 +32,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- WorkManager uses a default JobIntentService and no explicit declaration is required. -->
     </application>
 
 

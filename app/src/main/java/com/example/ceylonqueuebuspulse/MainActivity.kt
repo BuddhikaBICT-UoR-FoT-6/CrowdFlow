@@ -35,6 +35,7 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.example.ceylonqueuebuspulse.work.SyncScheduler
 
 // Entry point Activity. Hosts the Compose UI and connects it to the ViewModel.
 class MainActivity : ComponentActivity() {
@@ -70,6 +71,9 @@ class MainActivity : ComponentActivity() {
         // Draw content edge-to-edge under system bars
         enableEdgeToEdge()
 
+        // Schedule periodic background sync (Phase 3)
+        SyncScheduler.schedule(applicationContext)
+
         // Initialize fused location client and request configuration
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
         locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
@@ -83,22 +87,26 @@ class MainActivity : ComponentActivity() {
         // Compose UI content
         setContent {
             CeylonQueueBusPulseTheme {
-                // Observe ViewModel UI state; recomposes on changes
                 val state by viewModel.uiState.collectAsState()
-
-                // Base Material structure
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    // Vertical layout
                     Column(
                         modifier = Modifier
                             .padding(innerPadding)
                             .fillMaxSize()
                     ) {
-                        // Screen title
                         Text(
                             text = "Bus Traffic Updates",
                             style = MaterialTheme.typography.titleLarge
                         )
+                        Spacer(Modifier.height(4.dp))
+                        // Show sync/refresh status and last updated timestamp when available
+                        if (state.isSyncing) {
+                            Text("Syncing…", style = MaterialTheme.typography.bodyMedium)
+                        } else {
+                            state.lastUpdatedMs?.let { ts ->
+                                Text("Last updated: ${ts}", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
 
                         // Spacing
                         Spacer(Modifier.height(8.dp))

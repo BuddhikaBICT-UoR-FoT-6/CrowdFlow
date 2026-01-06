@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 // Networking (Phase 2; optional during offline prototyping)
 import com.example.ceylonqueuebuspulse.data.network.RetrofitProvider
 import com.example.ceylonqueuebuspulse.data.network.model.TrafficReportDto
+import com.example.ceylonqueuebuspulse.data.network.UserUpdateDto
 
 // Room DAO + entity (Phase 1 persistence layer)
 import com.example.ceylonqueuebuspulse.data.local.TrafficReportDao
@@ -69,19 +70,15 @@ class TrafficRepository(
         // Construct a minimal domain report from the user's location
         val report = TrafficReport(
             id = "user-${update.id}",
-            // Associate the report with the route when known; otherwise mark as "unknown".
             routeId = update.routeId ?: "unknown",
-            // Placeholder severity until congestion heuristic is implemented.
             severity = 3,
-            // Use a single point as the segment for now.
             segment = listOf(LatLng(update.lat, update.lng)),
-            // Use current time for the report timestamp; could also use update.timestamp.
             timestamp = System.currentTimeMillis(),
-            // Source marked as USER for downstream filtering/aggregation.
             source = TrafficSource.USER
         )
-        // Persist the report via Room; UI will react via the Flow mapping above.
         dao.insertReport(report.toEntity())
+        // Fire-and-forget remote push; repository remains offline-first
+        pushUserUpdateRemote(update)
     }
 
     // Fetch from backend and merge into Room (upsert semantics). Optional until backend live.
@@ -126,5 +123,23 @@ class TrafficRepository(
             severity = severity,
             source = "HISTORICAL", // or derive from DTO if available
             timestampMs = updatedAt
+        )
+
+    /** Push a user update to backend (best-effort) after saving locally. */
+    private suspend fun pushUserUpdateRemote(update: UserLocationUpdate) = withContext(io) {
+        runCatching {
+            val dto = update.toDto()
+            RetrofitProvider.api.submitUserUpdate(dto)
+        }
+    }
+
+    /** Map domain user update to network DTO. */
+    private fun UserLocationUpdate.toDto(): UserUpdateDto =
+        UserUpdateDto(
+            userId = userId,
+            routeId = routeId,
+            lat = lat,
+            lng = lng,
+            timestampMs = timestamp
         )
 }

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 /**
  * TrafficViewModel coordinates UI state for bus traffic updates.
@@ -107,9 +108,28 @@ class TrafficViewModel(
         }
     }
 
-    /** Trigger remote sync (Phase 2) and persist results through repository. */
+    /**
+     * Intent: refresh from remote backend and upsert into Room.
+     *
+     * Sets isSyncing, clears error, delegates to repository.sync(). On success, updates
+     * lastUpdatedMs; on failure, sets errorMessage. Always clears isSyncing at the end.
+     */
     fun refresh(city: String? = null) {
-        viewModelScope.launch { repository.sync(city) }
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSyncing = true, errorMessage = null)
+            try {
+                repository.sync(city)
+                _uiState.value = _uiState.value.copy(
+                    isSyncing = false,
+                    lastUpdatedMs = System.currentTimeMillis()
+                )
+            } catch (t: Throwable) {
+                _uiState.value = _uiState.value.copy(
+                    isSyncing = false,
+                    errorMessage = t.message ?: "Failed to sync"
+                )
+            }
+        }
     }
 
     /** Clears the current error message from the UI state. */
