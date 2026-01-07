@@ -1,13 +1,22 @@
 // Edited: 2026-01-06
-// Purpose: Use version catalog and pluginManagement to resolve plugins; apply Kotlin Compose compiler plugin per Kotlin 2.0 requirement; configure Hilt + WorkManager + Retrofit + Room deps.
+// Purpose: Use version catalog and pluginManagement to resolve plugins; apply Kotlin Compose compiler plugin per Kotlin 2.0 requirement; configure Koin + WorkManager + Retrofit + Room deps.
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.ksp)
-    // Hilt Android Gradle plugin (resolved via settings pluginManagement)
-    id("com.google.dagger.hilt.android")
+
+    // Code generation
+    alias(libs.plugins.ksp)     // Room ONLY
+}
+
+// Fix for: NoSuchMethodError: com.squareup.javapoet.ClassName.canonicalName()
+// Some processors (Room/others) can pull older javapoet versions transitively.
+// Force a compatible version ONLY on processor classpaths.
+configurations.matching {
+    it.name.contains("ksp", ignoreCase = true)
+}.configureEach {
+    resolutionStrategy.force("com.squareup:javapoet:1.13.0")
 }
 
 android {
@@ -33,6 +42,7 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
 }
 
 dependencies {
@@ -77,11 +87,24 @@ dependencies {
     // WorkManager
     implementation(libs.androidx.work.runtime.ktx)
 
-    // Hilt core
-    implementation(libs.hilt.android)
-    ksp(libs.hilt.compiler)
+    // Koin (DI)
+    implementation(libs.koin.android)
+    implementation(libs.koin.androidx.compose)
+    implementation(libs.koin.androidx.workmanager)
 
-    // Hilt + WorkManager integration
-    implementation(libs.androidx.hilt.work)
-    ksp(libs.androidx.hilt.compiler)
+    // Firebase (Phase 3 remote backend / data sync)
+    // Uses BOM to align Firebase component versions.
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.firestore.ktx)
+
+    // Unit testing
+    testImplementation(libs.junit)
+
+    // (Optional) Kotlin test helpers that bridge to JUnit4.
+    // Keep Kotlin version aligned via the Kotlin plugin (no hardcoded version here).
+    testImplementation(kotlin("test-junit"))
+
+    // (Optional but useful) Android instrumented test deps
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
 }

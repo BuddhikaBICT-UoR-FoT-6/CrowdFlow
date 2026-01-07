@@ -1,25 +1,27 @@
 package com.example.ceylonqueuebuspulse
 
 // Edited: 2026-01-07
-// Purpose: Application entry point for Hilt initialization and WorkManager integration.
-// This wires Hilt's WorkerFactory into WorkManager so @HiltWorker Workers can be constructed with DI.
+// Purpose: Application entry point for Koin initialization and WorkManager integration.
+// This wires Koin's WorkerFactory into WorkManager so workers can be created via Koin.
 
 import android.app.Application
-import androidx.hilt.work.HiltWorkerFactory
-import androidx.work.Configuration
-import dagger.hilt.android.HiltAndroidApp
-import javax.inject.Inject
+import com.example.ceylonqueuebuspulse.di.appModule
+import org.koin.android.ext.koin.androidContext
+import org.koin.android.ext.koin.androidLogger
+import org.koin.androidx.workmanager.koin.workManagerFactory
+import org.koin.core.context.startKoin
 
-@HiltAndroidApp
-class CeylonQueueBusPulseApp : Application(), Configuration.Provider {
-    // Injected factory that allows WorkManager to create Workers using Hilt (constructor injection).
-    @Inject
-    lateinit var workerFactory: HiltWorkerFactory
+class CeylonQueueBusPulseApp : Application() {
 
-    // WorkManager 2.11+ API: Configuration.Provider exposes a property.
-    // WorkManager will call this to obtain a Configuration, so it can create Workers via Hilt.
-    override val workManagerConfiguration: Configuration
-        get() = Configuration.Builder()
-            .setWorkerFactory(workerFactory)
-            .build()
+    override fun onCreate() {
+        super.onCreate()
+
+        startKoin {
+            androidLogger()
+            androidContext(this@CeylonQueueBusPulseApp)
+            // Let WorkManager create Koin-provided workers.
+            workManagerFactory()
+            modules(appModule)
+        }
+    }
 }

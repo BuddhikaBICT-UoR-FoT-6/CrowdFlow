@@ -13,8 +13,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
+import org.koin.androidx.viewmodel.ext.android.viewModel
 
 // Compose UI
 import androidx.compose.foundation.layout.*
@@ -45,12 +45,8 @@ import java.util.Date
 // Entry point Activity. Hosts the Compose UI and connects it to the ViewModel.
 class MainActivity : ComponentActivity() {
 
-    // ViewModel scoped to the Activity lifecycle
-    // Kotlin
-    private val viewModel: TrafficViewModel by viewModels {
-        com.example.ceylonqueuebuspulse.di.TrafficViewModelFactory(application)
-    }
-
+    // ViewModel scoped to the Activity lifecycle.
+    private val viewModel: TrafficViewModel by viewModel()
 
     // Fused Location state
     private lateinit var fusedClient: FusedLocationProviderClient

@@ -12,7 +12,6 @@ import com.example.ceylonqueuebuspulse.data.UserLocationUpdate
 
 // --- Android/DI ---
 import android.content.Context
-import javax.inject.Inject
 
 // --- Coroutines + Flow ---
 import kotlinx.coroutines.CoroutineDispatcher
@@ -29,6 +28,7 @@ import com.example.ceylonqueuebuspulse.data.network.UserUpdateDto
 // --- Room DAO + entity (local persistence) ---
 import com.example.ceylonqueuebuspulse.data.local.TrafficReportDao
 import com.example.ceylonqueuebuspulse.data.local.TrafficReportEntity
+import com.example.ceylonqueuebuspulse.data.remote.firestore.dto.TrafficSampleDto
 
 /**
  * Repository that acts as the single source of truth for traffic reports.
@@ -38,7 +38,7 @@ import com.example.ceylonqueuebuspulse.data.local.TrafficReportEntity
  * - Write: Seed historical reports and append user-submitted reports into Room.
  * - Remote: Sync remote -> Room and push user updates (best-effort).
  */
-class TrafficRepository @Inject constructor(
+class TrafficRepository(
     // DAO dependency; provided by the Room database.
     private val dao: TrafficReportDao,
     // IO dispatcher for Room and network work.
@@ -46,7 +46,9 @@ class TrafficRepository @Inject constructor(
     // Remote API injected via DI (Hilt)
     private val api: TrafficApi,
     // Application context (reserved for future needs; e.g., resources, connectivity)
-    @Suppress("unused") private val appContext: Context
+    @Suppress("unused") private val appContext: Context,
+    // Optional Phase 3 aggregation repo: when present, user updates are also submitted as samples.
+    private val aggregationRepository: TrafficAggregationRepository? = null
 ) {
 
     // Stream of domain models consumed by ViewModel/UI. Mapping preserves reactivity from Room.
@@ -75,18 +77,44 @@ class TrafficRepository @Inject constructor(
      * - Severity is a placeholder heuristic and can be replaced with a smarter algorithm.
      */
     suspend fun submitUserUpdate(update: UserLocationUpdate) = withContext(io) {
+        val nowMs = System.currentTimeMillis()
+        val routeId = update.routeId ?: "unknown"
+
         val report = TrafficReport(
             id = "user-${update.id}",
-            routeId = update.routeId ?: "unknown",
+            routeId = routeId,
             severity = 3, // TODO: derive from heuristics
             segment = listOf(LatLng(update.lat, update.lng)),
-            timestamp = System.currentTimeMillis(),
+            timestamp = nowMs,
             source = TrafficSource.USER
         )
         // Persist locally; UI will react via Room Flow
         dao.insertReport(report.toEntity())
-        // Best-effort push to backend
+
+        // Best-effort push to backend (legacy HTTP endpoint)
         pushUserUpdateRemote(update)
+
+        // Phase 3: submit a sample to Firestore so multi-user aggregation can run.
+        // This is best-effort and must not break offline flow.
+        runCatching {
+            val windowStartMs = floorToWindowStart(nowMs, windowSizeMs = 15 * 60 * 1000L)
+            aggregationRepository?.submitUserSample(
+                TrafficSampleDto(
+                    routeId = routeId,
+                    windowStartMs = windowStartMs,
+                    segmentId = null,
+                    severity = report.severity.toDouble(),
+                    accuracyM = null,
+                    userIdHash = update.userId,
+                    reportedAtMs = nowMs
+                )
+            )
+        }
+    }
+
+    private fun floorToWindowStart(tsMs: Long, windowSizeMs: Long): Long {
+        if (windowSizeMs <= 0L) return tsMs
+        return (tsMs / windowSizeMs) * windowSizeMs
     }
 
     /**
@@ -212,4 +240,3 @@ data class ReportEntity(
     val severity: Int,
     val timestampMs: Long
 )
-

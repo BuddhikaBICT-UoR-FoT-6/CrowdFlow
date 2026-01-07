@@ -7,6 +7,6 @@ plugins {
     alias(libs.plugins.kotlin.android) apply false
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.kotlin.kapt) apply false
-    // Removed Hilt plugin from root to declare in app module with explicit version alongside KSP
-    // Removed KSP plugin from root to declare in app module with explicit version
+    // KSP plugin alias from version catalog is "ksp" (not "kotlin.ksp")
+    alias(libs.plugins.ksp) apply false
 }

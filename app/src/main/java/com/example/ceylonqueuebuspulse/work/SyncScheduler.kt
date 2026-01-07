@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit
 
 object SyncScheduler {
     private const val UNIQUE_WORK_NAME = "traffic_sync_periodic"
+    private const val UNIQUE_AGG_WORK_NAME = "traffic_aggregate_sync_periodic"
 
     /**
      * Schedule periodic background sync.
@@ -38,6 +39,22 @@ object SyncScheduler {
                 UNIQUE_WORK_NAME,
                 ExistingPeriodicWorkPolicy.UPDATE,
                 request
+            )
+
+        // Aggregate + sync (remote aggregated truth -> local overwrite)
+        val aggRequest = PeriodicWorkRequestBuilder<FirestoreAggregationSyncWorker>(15, TimeUnit.MINUTES)
+            .setConstraints(constraints)
+            .setBackoffCriteria(
+                androidx.work.BackoffPolicy.LINEAR,
+                30, TimeUnit.SECONDS
+            )
+            .build()
+
+        WorkManager.getInstance(context)
+            .enqueueUniquePeriodicWork(
+                UNIQUE_AGG_WORK_NAME,
+                ExistingPeriodicWorkPolicy.UPDATE,
+                aggRequest
             )
     }
 }

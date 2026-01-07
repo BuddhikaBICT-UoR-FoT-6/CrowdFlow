@@ -1,5 +1,5 @@
-// Edited: 2026-01-05
-// Purpose: Room database providing DAOs for local persistence of traffic reports.
+// Edited: 2026-01-07
+// Purpose: Room database providing DAOs for local persistence of traffic reports and aggregation data.
 
 package com.example.ceylonqueuebuspulse.data.local
 
@@ -7,16 +7,34 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import com.example.ceylonqueuebuspulse.data.local.dao.AggregatedTrafficDao
+import com.example.ceylonqueuebuspulse.data.local.dao.SyncMetaDao
+import com.example.ceylonqueuebuspulse.data.local.entity.AggregatedTrafficEntity
+import com.example.ceylonqueuebuspulse.data.local.entity.SyncMetaEntity
 
 /**
  * Application-wide Room database. Holds the schema and serves DAO instances.
  *
- * Versioning: Start at version=1. Use migrations on schema changes to avoid destructive re-creates.
+ * Versioning: Updated to version=2 to include Phase 3 aggregation entities.
  */
-@Database(entities = [TrafficReportEntity::class], version = 1, exportSchema = false)
+@Database(
+    entities = [
+        TrafficReportEntity::class,
+        AggregatedTrafficEntity::class,
+        SyncMetaEntity::class
+    ],
+    version = 2,
+    exportSchema = false
+)
 abstract class AppDatabase : RoomDatabase(){
     /** DAO for traffic report operations. */
     abstract fun trafficReportDao(): TrafficReportDao
+
+    /** DAO for aggregated traffic data (Phase 3). */
+    abstract fun aggregatedTrafficDao(): AggregatedTrafficDao
+
+    /** DAO for sync metadata (Phase 3). */
+    abstract fun syncMetaDao(): SyncMetaDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null

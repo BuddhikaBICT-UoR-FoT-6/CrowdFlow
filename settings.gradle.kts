@@ -1,5 +1,5 @@
 // Edited: 2026-01-06
-// Purpose: Declare plugin versions (AGP, Kotlin, KSP, Compose compiler, Hilt) so module scripts can apply plugins without inline versions.
+// Purpose: Declare plugin versions (AGP, Kotlin, KSP, Compose compiler) so module scripts can apply plugins without inline versions.
 
 pluginManagement {
     repositories {
@@ -19,7 +19,6 @@ pluginManagement {
         id("org.jetbrains.kotlin.android") version "2.0.21"
         id("org.jetbrains.kotlin.plugin.compose") version "2.0.21"
         id("com.google.devtools.ksp") version "2.0.21-1.0.28"
-        id("com.google.dagger.hilt.android") version "2.54"
     }
 }
 
