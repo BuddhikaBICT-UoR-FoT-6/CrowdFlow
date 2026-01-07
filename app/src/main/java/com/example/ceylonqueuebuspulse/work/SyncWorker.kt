@@ -4,30 +4,31 @@
 package com.example.ceylonqueuebuspulse.work
 
 import android.content.Context
+import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.example.ceylonqueuebuspulse.data.local.AppDatabase
 import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedInject
 
 /**
  * WorkManager worker that runs periodically in the background to pull latest traffic reports
  * from the backend and store them in Room.
  */
-class SyncWorker(
-    appContext: Context,
-    params: WorkerParameters
+@HiltWorker
+class SyncWorker @AssistedInject constructor(
+    @Assisted appContext: Context,
+    @Assisted params: WorkerParameters,
+    // Repository is provided by Hilt (and internally uses Retrofit + Room DAO)
+    private val repository: TrafficRepository
 ) : CoroutineWorker(appContext, params) {
 
-    override suspend fun doWork(): Result {
-        return try {
-            val db = AppDatabase.get(applicationContext)
-            val repo = TrafficRepository(db.trafficReportDao())
-            // City is optional; could be passed via inputData if needed
-            repo.sync(city = null)
-            Result.success()
-        } catch (t: Throwable) {
-            Result.retry()
-        }
+    override suspend fun doWork(): Result = try {
+        // Pull remote data and upsert into Room.
+        repository.syncRemoteToLocal()
+        Result.success()
+    } catch (t: Throwable) {
+        // Let WorkManager retry with backoff.
+        Result.retry()
     }
 }
-

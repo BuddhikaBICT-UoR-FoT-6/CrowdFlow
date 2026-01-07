@@ -1,13 +1,13 @@
-// Edited: 2026-01-05
-// Purpose: App module Gradle configuration enabling Jetpack Compose and declaring dependencies.
+// Edited: 2026-01-06
+// Purpose: Use version catalog and pluginManagement to resolve plugins; apply Kotlin Compose compiler plugin per Kotlin 2.0 requirement; configure Hilt + WorkManager + Retrofit + Room deps.
 
-// Kotlin
-// `app/build.gradle.kts`
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.ksp) // Ensure KSP configuration is available with version from catalog
+    alias(libs.plugins.ksp)
+    // Hilt Android Gradle plugin (resolved via settings pluginManagement)
+    id("com.google.dagger.hilt.android")
 }
 
 android {
@@ -36,41 +36,52 @@ android {
 }
 
 dependencies {
-    // Compose BOM to align versions (use catalog)
+    // Compose BOM
     implementation(platform(libs.androidx.compose.bom))
 
-    // Core Compose UI (from catalog entries)
+    // Compose UI
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     debugImplementation(libs.androidx.ui.tooling)
 
-    // Material 3
+    // Material3
     implementation(libs.androidx.material3)
+    // Material icons (required for Icons.* usage)
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
 
     // Activity Compose
     implementation(libs.androidx.activity.compose)
 
-    // Lifecycle + ViewModel for Compose
+    // Lifecycle + ViewModel Compose
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
-    // Coroutines (not in catalog):
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Coroutines
+    implementation(libs.kotlinx.coroutines.android)
 
     // Google Play Services Location
     implementation(libs.play.services.location)
 
-    // Room persistence library (KSP for Kotlin)
-    implementation("androidx.room:room-runtime:2.8.4")
-    implementation("androidx.room:room-ktx:2.8.4")
-    ksp("androidx.room:room-compiler:2.8.4")
+    // Room (KSP)
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
 
-    // Networking: Retrofit + Moshi for REST API integration
-    implementation("com.squareup.retrofit2:retrofit:2.11.0")
-    implementation("com.squareup.retrofit2:converter-moshi:2.11.0")
-    implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
+    // Networking
+    implementation(libs.retrofit)
+    implementation(libs.converter.moshi)
+    implementation(libs.moshi.kotlin)
 
-    // WorkManager for background sync tasks (Phase 3 Remote Sync)
+    // WorkManager
     implementation(libs.androidx.work.runtime.ktx)
+
+    // Hilt core
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+
+    // Hilt + WorkManager integration
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
 }

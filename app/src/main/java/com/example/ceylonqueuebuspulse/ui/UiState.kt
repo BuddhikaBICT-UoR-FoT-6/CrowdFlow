@@ -27,3 +27,10 @@ data class UiState(
     // NEW (Phase 3): last successful data refresh time (epoch millis) for UI display
     val lastUpdatedMs: Long? = null
 )
+
+data class TrafficReporterUi(
+    val routeId: String,
+    val severity: Int,
+    val segment: List<Pair<Double, Double>>
+
+)

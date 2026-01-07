@@ -1,18 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Edited: 2025-12-27 -->
-<!-- Purpose: Android app manifest declaring permissions, application configuration, and main activity entry point. -->
+<!-- Edited: 2026-01-06 -->
+<!-- Purpose: Android manifest; register Hilt Application class and declare permissions, app config, and MainActivity. -->
 <!-- AndroidManifest -->
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.ceylonqueuebuspulse">
 
-    <!-- Network permissions for Retrofit/WorkManager sync -->
+    <!-- Network and location permissions for sync and location updates -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <application
+        android:name=".CeylonQueueBusPulseApp"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -28,12 +29,10 @@
             android:theme="@style/Theme.CeylonQueueBusPulse">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- WorkManager uses a default JobIntentService and no explicit declaration is required. -->
+        <!-- WorkManager uses default services; HiltWorkerFactory provided via Application class -->
     </application>
 
 

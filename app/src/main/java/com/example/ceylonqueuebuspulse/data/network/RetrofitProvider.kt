@@ -4,12 +4,14 @@
 package com.example.ceylonqueuebuspulse.data.network
 
 import com.squareup.moshi.Moshi
+import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
+import java.util.concurrent.TimeUnit
 
 // Simple Retrofit provider. Replace BASE_URL with your backend URL.
 object RetrofitProvider {
-    private const val BASE_URL = "https://api.example.com/" // TODO: set real backend URL
+    const val BASE_URL = "https://api.example.com/" // TODO: set real backend URL
 
     // Build a Moshi instance for Kotlin JSON serialization/deserialization.
     private val moshi: Moshi = Moshi.Builder().build()
@@ -22,4 +24,16 @@ object RetrofitProvider {
             .build()
             .create(TrafficApi::class.java)
     }
+
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(20, TimeUnit.SECONDS)
+        .build()
+
+    fun retrofit(): Retrofit = Retrofit.Builder()
+        .baseUrl(BASE_URL)
+        .addConverterFactory(MoshiConverterFactory.create())
+        .client(client)
+        .build()
 }

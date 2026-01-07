@@ -1,5 +1,5 @@
-// Edited: 2025-12-27
-// Purpose: Main activity sets up Jetpack Compose UI and binds to TrafficViewModel to display bus traffic updates.
+// Edited: 2026-01-06
+// Purpose: Main activity hosts Compose UI, binds to TrafficViewModel, schedules background sync, and streams location updates.
 
 // Kotlin
 package com.example.ceylonqueuebuspulse
@@ -18,6 +18,8 @@ import androidx.core.content.ContextCompat
 
 // Compose UI
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -27,6 +29,7 @@ import androidx.compose.ui.unit.dp
 // Theme + ViewModel
 import com.example.ceylonqueuebuspulse.ui.theme.CeylonQueueBusPulseTheme
 import com.example.ceylonqueuebuspulse.ui.TrafficViewModel
+import com.example.ceylonqueuebuspulse.work.SyncScheduler
 
 // Google Play Services Location APIs
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -35,7 +38,9 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import com.example.ceylonqueuebuspulse.work.SyncScheduler
+
+import java.text.DateFormat
+import java.util.Date
 
 // Entry point Activity. Hosts the Compose UI and connects it to the ViewModel.
 class MainActivity : ComponentActivity() {
@@ -66,6 +71,7 @@ class MainActivity : ComponentActivity() {
         }
 
     // Lifecycle: initialize location and compose UI
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Draw content edge-to-edge under system bars
@@ -88,27 +94,61 @@ class MainActivity : ComponentActivity() {
         setContent {
             CeylonQueueBusPulseTheme {
                 val state by viewModel.uiState.collectAsState()
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                val snackbarHostState = remember { SnackbarHostState() }
+
+                // Show error as snackbar when errorMessage changes
+                LaunchedEffect(state.errorMessage) {
+                    state.errorMessage?.let {
+                        snackbarHostState.showSnackbar(it)
+                        viewModel.clearError()
+                    }
+                }
+
+                // Convert epoch millis -> human-readable local date/time.
+                // Uses java.text.DateFormat for API 24+ compatibility.
+                val formattedLastUpdate = remember(state.lastUpdatedMs) {
+                    state.lastUpdatedMs?.let { ms ->
+                        DateFormat.getDateTimeInstance(
+                            DateFormat.MEDIUM,
+                            DateFormat.SHORT
+                        ).format(Date(ms))
+                    }
+                }
+
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    topBar = {
+                        TopAppBar(
+                            title = { Text("Bus Traffic Updates") },
+                            actions = {
+                                IconButton(onClick = { viewModel.refresh() }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Refresh,
+                                        contentDescription = "Refresh"
+                                    )
+                                }
+                            }
+                        )
+                    },
+                    snackbarHost = { SnackbarHost(snackbarHostState) }
+                ) { innerPadding ->
                     Column(
                         modifier = Modifier
                             .padding(innerPadding)
                             .fillMaxSize()
+                            .padding(16.dp)
                     ) {
-                        Text(
-                            text = "Bus Traffic Updates",
-                            style = MaterialTheme.typography.titleLarge
-                        )
                         Spacer(Modifier.height(4.dp))
+
                         // Show sync/refresh status and last updated timestamp when available
                         if (state.isSyncing) {
                             Text("Syncing…", style = MaterialTheme.typography.bodyMedium)
                         } else {
-                            state.lastUpdatedMs?.let { ts ->
-                                Text("Last updated: ${ts}", style = MaterialTheme.typography.bodySmall)
+                            formattedLastUpdate?.let { pretty ->
+                                Text("Last updated: $pretty", style = MaterialTheme.typography.bodySmall)
                             }
                         }
 
-                        // Spacing
                         Spacer(Modifier.height(8.dp))
 
                         // List current traffic reports
@@ -118,7 +158,6 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // More spacing
                         Spacer(Modifier.height(16.dp))
 
                         // Sample action to submit a fixed location (Colombo)
