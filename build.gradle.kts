@@ -9,6 +9,4 @@ plugins {
     alias(libs.plugins.kotlin.kapt) apply false
     // KSP plugin alias from version catalog is "ksp" (not "kotlin.ksp")
     alias(libs.plugins.ksp) apply false
-    // Google Services plugin for Firebase (processes google-services.json)
-    alias(libs.plugins.google.services) apply false
 }
