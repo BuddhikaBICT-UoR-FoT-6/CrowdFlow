@@ -76,6 +76,16 @@ class MainActivity : ComponentActivity() {
         // Draw content edge-to-edge under system bars
         enableEdgeToEdge()
 
+        // Initialize Firebase Auth anonymously (redundant with Application-level but harmless)
+        com.google.firebase.ktx.Firebase.auth.signInAnonymously()
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    android.util.Log.d("MainActivity", "Firebase anonymous sign-in successful")
+                } else {
+                    android.util.Log.e("MainActivity", "Firebase anonymous sign-in failed", task.exception)
+                }
+            }
+
         // Schedule periodic background sync (Phase 3)
         SyncScheduler.schedule(applicationContext)
 
@@ -334,8 +344,9 @@ class MainActivity : ComponentActivity() {
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val loc = result.lastLocation ?: return
-                val routeId = "route-1" // TODO: map to real route selection
-                viewModel.submitUserLocation(loc.latitude, loc.longitude, routeId)
+                // Use the currently selected route from the ViewModel
+                val currentRouteId = viewModel.uiState.value.selectedRouteId
+                viewModel.submitUserLocation(loc.latitude, loc.longitude, currentRouteId)
             }
         }
 

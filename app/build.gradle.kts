@@ -106,6 +106,7 @@ dependencies {
     // Uses BOM to align Firebase component versions.
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.firestore.ktx)
+    implementation(libs.firebase.auth.ktx)
 
     // Unit testing
     testImplementation(libs.junit)

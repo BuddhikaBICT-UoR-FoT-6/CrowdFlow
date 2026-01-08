@@ -4,9 +4,11 @@
 package com.example.ceylonqueuebuspulse.work
 
 import android.content.Context
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
+import com.google.firebase.firestore.FirebaseFirestoreException
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
@@ -38,8 +40,21 @@ class FirestoreAggregationSyncWorker(
                 nowMs = System.currentTimeMillis()
             )
             Result.success()
+        } catch (e: FirebaseFirestoreException) {
+            // Handle PERMISSION_DENIED separately to avoid infinite retries
+            if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                Log.e("FirestoreAggregationSyncWorker", 
+                    "PERMISSION_DENIED writing to Firestore. Check security rules or move writes to backend.", e)
+                // Fail permanently - don't retry on permission errors
+                Result.failure()
+            } else {
+                // Retry on other Firestore errors (network, etc.)
+                Log.e("FirestoreAggregationSyncWorker", "Firestore error: ${e.code}", e)
+                Result.retry()
+            }
         } catch (e: Exception) {
-            // TODO: add logging
+            // Retry on other exceptions
+            Log.e("FirestoreAggregationSyncWorker", "Unexpected error during aggregation", e)
             Result.retry()
         }
     }
