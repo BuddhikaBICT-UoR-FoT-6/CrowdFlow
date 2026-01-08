@@ -10,6 +10,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
+import com.example.ceylonqueuebuspulse.work.MongoAggregationSyncWorker
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
@@ -70,7 +71,7 @@ class AggregationPlannerWorker(
     }
 
     private fun enqueueAggregationWorker(routeId: String, windowStartMs: Long) {
-        val workRequest = OneTimeWorkRequestBuilder<FirestoreAggregationSyncWorker>()
+        val workRequest = OneTimeWorkRequestBuilder<MongoAggregationSyncWorker>()
             .setInputData(
                 workDataOf(
                     "routeId" to routeId,
@@ -85,4 +86,3 @@ class AggregationPlannerWorker(
             .enqueue(workRequest)
     }
 }
-

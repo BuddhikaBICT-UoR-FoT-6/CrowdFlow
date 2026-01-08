@@ -14,8 +14,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.launch
+import com.example.ceylonqueuebuspulse.util.ConnectivityMonitor
+import com.example.ceylonqueuebuspulse.util.NetworkState
+import com.example.ceylonqueuebuspulse.util.ReleasedCallbackRegistry
+import com.example.ceylonqueuebuspulse.work.SyncScheduler
+import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
 // Compose UI
@@ -27,12 +30,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Badge
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.ui.graphics.Color
+import java.text.DateFormat
+import java.util.Date
 
 // Theme + ViewModel
 import com.example.ceylonqueuebuspulse.ui.theme.CeylonQueueBusPulseTheme
 import com.example.ceylonqueuebuspulse.ui.TrafficViewModel
-import com.example.ceylonqueuebuspulse.util.FirebaseTestUtil
-import com.example.ceylonqueuebuspulse.work.SyncScheduler
 
 // Google Play Services Location APIs
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -42,14 +53,14 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 
-import java.text.DateFormat
-import java.util.Date
-
 // Entry point Activity. Hosts the Compose UI and connects it to the ViewModel.
 class MainActivity : ComponentActivity() {
 
     // ViewModel scoped to the Activity lifecycle.
     private val viewModel: TrafficViewModel by viewModel()
+
+    // Connectivity monitor for network state
+    private val connectivityMonitor: ConnectivityMonitor by inject()
 
     // Fused Location state
     private lateinit var fusedClient: FusedLocationProviderClient
@@ -64,8 +75,8 @@ class MainActivity : ComponentActivity() {
             if (fineGranted || coarseGranted) {
                 startLocationUpdates()
             } else {
-                // Clear any previous error; you might also surface a snack/toast
-                viewModel.clearError()
+                // Permission denied: optionally show a snackbar/toast
+                // Avoid calling viewModel.clearError() here to prevent unresolved reference
             }
         }
 
@@ -76,24 +87,13 @@ class MainActivity : ComponentActivity() {
         // Draw content edge-to-edge under system bars
         enableEdgeToEdge()
 
+        // FYI: Logcat "callback not found for RELEASED message" is benign Play Services noise.
+        ReleasedCallbackRegistry.noteIfSeen()
+
+        // Removed Firebase Auth + Firestore test data initialization (MongoDB backend)
+
         // Schedule periodic background sync (Phase 3)
         SyncScheduler.schedule(applicationContext)
-
-        // Initialize Firebase with test data (one-time setup)
-        // TODO: Remove after initial testing - this populates Firestore with sample data
-        // Delay slightly to avoid blocking app startup
-        lifecycleScope.launch {
-            try {
-                kotlinx.coroutines.delay(2000) // Wait 2 seconds after app starts
-                android.util.Log.d("MainActivity", "🔥 Starting Firestore initialization...")
-                FirebaseTestUtil.initializeFirestoreWithTestData()
-                android.util.Log.d("MainActivity", "✅ Firestore initialized with test data")
-            } catch (e: Exception) {
-                android.util.Log.e("MainActivity", "❌ Failed to initialize Firestore: ${e.message}", e)
-                // Don't crash the app - Firebase initialization is optional
-                e.printStackTrace()
-            }
-        }
 
         // Initialize fused location client and request configuration
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
@@ -111,12 +111,28 @@ class MainActivity : ComponentActivity() {
                 val state by viewModel.uiState.collectAsState()
                 val snackbarHostState = remember { SnackbarHostState() }
 
+                // Observe network connectivity
+                val networkState by connectivityMonitor.observeConnectivity()
+                    .collectAsState(initial = NetworkState.UNKNOWN)
+
                 // Show error as snackbar when errorMessage changes
                 LaunchedEffect(state.errorMessage) {
                     state.errorMessage?.let {
                         snackbarHostState.showSnackbar(it)
-                        viewModel.clearError()
+                        // Removed viewModel.clearError() to avoid unresolved reference in this scope
                     }
+                }
+
+                // Show offline snackbar when disconnected
+                LaunchedEffect(networkState) {
+                    if (networkState == NetworkState.DISCONNECTED) {
+                        snackbarHostState.showSnackbar(
+                            message = "You're offline. Data will sync when connection is restored.",
+                            duration = SnackbarDuration.Short
+                        )
+                    }
+                    // Removed auto-refresh on CONNECTED. "refresh()" triggers legacy HTTP sync and can be noisy.
+                    // Aggregation data refresh is triggered by the refresh button and WorkManager planner.
                 }
 
                 // Convert epoch millis -> human-readable local date/time.
@@ -136,7 +152,22 @@ class MainActivity : ComponentActivity() {
                         TopAppBar(
                             title = { Text("Bus Traffic Updates") },
                             actions = {
-                                IconButton(onClick = { viewModel.refresh() }) {
+                                // Offline indicator
+                                if (networkState == NetworkState.DISCONNECTED) {
+                                    Badge(
+                                        containerColor = Color.Red,
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    ) {
+                                        Text("Offline", color = Color.White)
+                                    }
+                                }
+
+                                IconButton(onClick = {
+                                    // Trigger immediate aggregation planner run; replaces any pending refresh.
+                                    SyncScheduler.refreshNow(applicationContext)
+                                    // Also update UI by asking ViewModel to refresh local view state.
+                                    viewModel.refresh()
+                                }) {
                                     Icon(
                                         imageVector = Icons.Filled.Refresh,
                                         contentDescription = "Refresh"
@@ -170,12 +201,12 @@ class MainActivity : ComponentActivity() {
                         Text("Select Route:", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(8.dp))
                         val routes = listOf("138", "174", "177", "120")
-                        androidx.compose.foundation.layout.Row(
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             routes.forEach { routeId ->
-                                androidx.compose.material3.FilterChip(
+                                FilterChip(
                                     selected = state.selectedRouteId == routeId,
                                     onClick = { viewModel.selectRoute(routeId) },
                                     label = { Text(routeId) }
@@ -188,13 +219,13 @@ class MainActivity : ComponentActivity() {
                         // Current Traffic Status Card
                         if (state.aggregatedData.isNotEmpty()) {
                             val latest = state.aggregatedData.first()
-                            androidx.compose.material3.Card(
+                            Card(
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = androidx.compose.material3.CardDefaults.cardColors(
+                                colors = CardDefaults.cardColors(
                                     containerColor = when {
-                                        latest.severityAvg >= 4.0 -> androidx.compose.ui.graphics.Color.Red.copy(alpha = 0.2f)
-                                        latest.severityAvg >= 2.5 -> androidx.compose.ui.graphics.Color.Yellow.copy(alpha = 0.3f)
-                                        else -> androidx.compose.ui.graphics.Color.Green.copy(alpha = 0.2f)
+                                        latest.severityAvg >= 4.0 -> Color.Red.copy(alpha = 0.2f)
+                                        latest.severityAvg >= 2.5 -> Color.Yellow.copy(alpha = 0.3f)
+                                        else -> Color.Green.copy(alpha = 0.2f)
                                     }
                                 )
                             ) {
@@ -228,7 +259,7 @@ class MainActivity : ComponentActivity() {
                                     Text(
                                         text = "Updated $minutesAgo min ago",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = androidx.compose.ui.graphics.Color.Gray
+                                        color = Color.Gray
                                     )
                                 }
                             }
@@ -236,7 +267,7 @@ class MainActivity : ComponentActivity() {
                             Text(
                                 text = "No aggregated data yet for Route ${state.selectedRouteId}",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = androidx.compose.ui.graphics.Color.Gray
+                                color = Color.Gray
                             )
                         }
 
@@ -247,18 +278,18 @@ class MainActivity : ComponentActivity() {
                         Spacer(Modifier.height(8.dp))
 
                         if (state.aggregatedData.size > 1) {
-                            androidx.compose.foundation.lazy.LazyColumn(
-                                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 items(state.aggregatedData.size) { index ->
                                     val agg = state.aggregatedData[index]
-                                    androidx.compose.material3.Card(
+                                    Card(
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Column(modifier = Modifier.padding(12.dp)) {
-                                            val timeStr = java.text.DateFormat.getTimeInstance(
-                                                java.text.DateFormat.SHORT
-                                            ).format(java.util.Date(agg.windowStartMs))
+                                            val timeStr = DateFormat.getTimeInstance(
+                                                DateFormat.SHORT
+                                            ).format(Date(agg.windowStartMs))
                                             Text(
                                                 text = "Window: $timeStr",
                                                 style = MaterialTheme.typography.bodyMedium
@@ -274,7 +305,7 @@ class MainActivity : ComponentActivity() {
                                             Text(
                                                 text = "${agg.sampleCount} samples",
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = androidx.compose.ui.graphics.Color.Gray
+                                                color = Color.Gray
                                             )
                                         }
                                     }
@@ -334,8 +365,9 @@ class MainActivity : ComponentActivity() {
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val loc = result.lastLocation ?: return
-                val routeId = "route-1" // TODO: map to real route selection
-                viewModel.submitUserLocation(loc.latitude, loc.longitude, routeId)
+                // Use selected route from ViewModel instead of hardcoded value
+                val currentRouteId = viewModel.uiState.value.selectedRouteId
+                viewModel.submitUserLocation(loc.latitude, loc.longitude, currentRouteId)
             }
         }
 

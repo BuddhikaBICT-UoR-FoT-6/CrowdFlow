@@ -1,5 +1,5 @@
-// Edited: 2026-01-07
-// Purpose: WorkManager worker that aggregates a time-window of traffic samples and syncs the aggregated result to Firestore (single source of truth).
+// Edited: 2026-01-08
+// Purpose: WorkManager worker that triggers aggregation and syncs aggregated result from the MongoDB backend.
 
 package com.example.ceylonqueuebuspulse.work
 
@@ -10,14 +10,7 @@ import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationReposit
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 
-/**
- * Background worker that performs "window aggregation" for a specific route.
- *
- * It fetches recent user-submitted samples for a given time window, computes a statistical
- * aggregate, writes that aggregate to Firestore as the source of truth, and then updates the
- * local Room cache from that remote truth.
- */
-class FirestoreAggregationSyncWorker(
+class MongoAggregationSyncWorker(
     appContext: Context,
     params: WorkerParameters
 ) : CoroutineWorker(appContext, params), KoinComponent {
@@ -25,7 +18,6 @@ class FirestoreAggregationSyncWorker(
     private val aggregationRepo: TrafficAggregationRepository by inject()
 
     override suspend fun doWork(): Result {
-        // Validate inputs so WorkManager chains can still treat this as a real unit of work.
         val routeId = inputData.getString("routeId") ?: return Result.failure()
         val windowStartMs = inputData.getLong("windowStartMs", -1L)
         if (windowStartMs <= 0L) return Result.failure()
@@ -34,13 +26,14 @@ class FirestoreAggregationSyncWorker(
             aggregationRepo.aggregateAndSyncWindow(
                 routeId = routeId,
                 windowStartMs = windowStartMs,
-                segmentId = null, // Aggregate all segments for now
+                segmentId = null,
                 nowMs = System.currentTimeMillis()
             )
             Result.success()
         } catch (e: Exception) {
-            // TODO: add logging
+            android.util.Log.e("MongoAggregationSyncWorker", "❌ Aggregation sync failed", e)
             Result.retry()
         }
     }
 }
+

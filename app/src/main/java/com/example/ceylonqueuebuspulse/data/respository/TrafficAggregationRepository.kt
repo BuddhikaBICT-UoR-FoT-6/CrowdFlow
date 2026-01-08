@@ -1,13 +1,12 @@
 package com.example.ceylonqueuebuspulse.data.repository
 
-import com.example.ceylonqueuebuspulse.data.aggregation.TrafficAggregator
 import com.example.ceylonqueuebuspulse.data.local.dao.AggregatedTrafficDao
 import com.example.ceylonqueuebuspulse.data.local.dao.SyncMetaDao
 import com.example.ceylonqueuebuspulse.data.local.entity.AggregatedTrafficEntity
 import com.example.ceylonqueuebuspulse.data.local.entity.SyncMetaEntity
-import com.example.ceylonqueuebuspulse.data.remote.firestore.FirestoreTrafficDataSource
-import com.example.ceylonqueuebuspulse.data.remote.firestore.dto.AggregatedTrafficDto
-import com.example.ceylonqueuebuspulse.data.remote.firestore.dto.TrafficSampleDto
+import com.example.ceylonqueuebuspulse.data.network.model.AggregateRequest
+import com.example.ceylonqueuebuspulse.data.network.model.MongoApi
+import com.example.ceylonqueuebuspulse.data.network.model.SubmitSampleRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -17,7 +16,7 @@ import kotlinx.coroutines.withContext
  * syncs with Firestore (treating remote as source of truth), and exposes aggregated data for UI.
  */
 class TrafficAggregationRepository(
-    private val remote: FirestoreTrafficDataSource,
+    private val mongoApi: MongoApi,
     private val aggregatedTrafficDao: AggregatedTrafficDao,
     private val syncMetaDao: SyncMetaDao,
 ){
@@ -38,8 +37,23 @@ class TrafficAggregationRepository(
         syncMetaDao.get(metaKey(routeId))
     }
 
-    suspend fun submitUserSample(sample: TrafficSampleDto) {
-        remote.submitSample(sample)
+    suspend fun submitUserSample(
+        routeId: String,
+        windowStartMs: Long,
+        segmentId: String?,
+        severity: Double,
+        reportedAtMs: Long,
+        userIdHash: String?
+    ) = withContext(Dispatchers.IO) {
+        val body = SubmitSampleRequest(
+            routeId = routeId,
+            windowStartMs = windowStartMs,
+            segmentId = segmentId ?: "_all",
+            severity = severity,
+            reportedAtMs = reportedAtMs,
+            userIdHash = userIdHash
+        )
+        mongoApi.submitSample(body)
     }
 
     /**
@@ -51,33 +65,28 @@ class TrafficAggregationRepository(
         windowStartMs: Long,
         segmentId: String?,
         nowMs: Long,
-        sampleLookbackMs: Long = 30 * 60 * 1000L
-    ) = withContext(Dispatchers.IO){
-        val sinceMs = nowMs - sampleLookbackMs
-        val samples = remote.fetchRecentSamples(
-            routeId = routeId,
-            windowStartMs = windowStartMs,
-            segmentId = segmentId,
-            sinceMs = sinceMs
+    ) = withContext(Dispatchers.IO) {
+        // Ask server to compute and upsert aggregate
+        mongoApi.aggregateWindow(
+            AggregateRequest(routeId = routeId, windowStartMs = windowStartMs, segmentId = segmentId ?: "_all")
         )
 
-        val agg = TrafficAggregator.aggregate(samples, nowMs = nowMs)
+        // Fetch aggregates for window
+        val resp = mongoApi.getAggregates(routeId = routeId, windowStartMs = windowStartMs)
+        val entities = (resp.data ?: emptyList()).map { dto ->
+            AggregatedTrafficEntity(
+                routeId = dto.routeId,
+                windowStartMs = dto.windowStartMs,
+                segmentId = dto.segmentId,
+                severityAvg = dto.severityAvg,
+                severityP50 = dto.severityP50,
+                severityP90 = dto.severityP90,
+                sampleCount = dto.sampleCount,
+                lastAggregatedAtMs = dto.lastAggregatedAtMs
+            )
+        }
 
-        val dto = AggregatedTrafficDto(
-            routeId = routeId,
-            windowStartMs = windowStartMs,
-            segmentId = segmentId,
-            severityAvg = agg.severityAvg,
-            severityP50 = agg.severityP50,
-            severityP90 = agg.severityP90,
-            sampleCount = agg.sampleCount,
-            lastAggregatedAtMs = nowMs
-        )
-
-        remote.writeAggregate(dto)
-
-        // Refresh local cache = remote truth
-        refreshWindowFromRemote(routeId, windowStartMs)
+        aggregatedTrafficDao.overwriteWindow(routeId, windowStartMs, entities)
 
         syncMetaDao.upsert(
             SyncMetaEntity(
@@ -86,31 +95,22 @@ class TrafficAggregationRepository(
                 lastWindowStartMs = windowStartMs
             )
         )
-
     }
 
     suspend fun refreshWindowFromRemote(routeId: String, windowStartMs: Long) = withContext(Dispatchers.IO) {
-        // Fetch aggregates from Firestore for this window.
-        val aggregates: List<AggregatedTrafficDto> = remote.fetchAggregatesForWindow(routeId, windowStartMs)
-
-        // Map remote DTO -> Room entity.
-        val entities: List<AggregatedTrafficEntity> = aggregates.map { dto: AggregatedTrafficDto -> dto.toEntity() }
-
-        // Overwrite ensures outdated local cache is removed (remote is treated as source of truth).
+        val resp = mongoApi.getAggregates(routeId, windowStartMs)
+        val entities = (resp.data ?: emptyList()).map { dto ->
+            AggregatedTrafficEntity(
+                routeId = dto.routeId,
+                windowStartMs = dto.windowStartMs,
+                segmentId = dto.segmentId,
+                severityAvg = dto.severityAvg,
+                severityP50 = dto.severityP50,
+                severityP90 = dto.severityP90,
+                sampleCount = dto.sampleCount,
+                lastAggregatedAtMs = dto.lastAggregatedAtMs
+            )
+        }
         aggregatedTrafficDao.overwriteWindow(routeId, windowStartMs, entities)
     }
-
-    private fun AggregatedTrafficDto.toEntity(): AggregatedTrafficEntity {
-        return AggregatedTrafficEntity(
-            routeId = routeId,
-            windowStartMs = windowStartMs,
-            segmentId = segmentId ?: "_all",
-            severityAvg = severityAvg,
-            severityP50 = severityP50,
-            severityP90 = severityP90,
-            sampleCount = sampleCount,
-            lastAggregatedAtMs = lastAggregatedAtMs
-        )
-    }
-
 }

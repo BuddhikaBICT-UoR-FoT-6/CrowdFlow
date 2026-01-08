@@ -6,14 +6,16 @@ package com.example.ceylonqueuebuspulse.work
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
 
 object SyncScheduler {
-    private const val UNIQUE_WORK_NAME = "traffic_sync_periodic"
     private const val UNIQUE_PLANNER_WORK_NAME = "traffic_aggregation_planner_periodic"
+    private const val UNIQUE_PLANNER_REFRESH_NAME = "traffic_aggregation_planner_refresh"
 
     /**
      * Schedule periodic background sync and aggregation.
@@ -25,24 +27,7 @@ object SyncScheduler {
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
-        // Legacy sync worker (syncs raw reports from backend)
-        val request = PeriodicWorkRequestBuilder<SyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(constraints)
-            // Backoff applies to retries when the worker returns Result.retry().
-            .setBackoffCriteria(
-                androidx.work.BackoffPolicy.LINEAR,
-                30, TimeUnit.SECONDS
-            )
-            .build()
-
-        WorkManager.getInstance(context)
-            .enqueueUniquePeriodicWork(
-                UNIQUE_WORK_NAME,
-                ExistingPeriodicWorkPolicy.UPDATE,
-                request
-            )
-
-        // Planner worker that determines active routes/windows and enqueues one-time aggregation workers
+        // Mongo-only: schedule the planner which enqueues one-time aggregation+sync workers.
         val plannerRequest = PeriodicWorkRequestBuilder<AggregationPlannerWorker>(15, TimeUnit.MINUTES)
             .setConstraints(constraints)
             .setBackoffCriteria(
@@ -56,6 +41,27 @@ object SyncScheduler {
                 UNIQUE_PLANNER_WORK_NAME,
                 ExistingPeriodicWorkPolicy.UPDATE,
                 plannerRequest
+            )
+    }
+
+    /**
+     * Trigger an immediate refresh of aggregation by enqueuing the planner as a unique one-time work.
+     * Any existing pending planner refresh will be replaced.
+     */
+    fun refreshNow(context: Context) {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val refreshPlanner = OneTimeWorkRequestBuilder<AggregationPlannerWorker>()
+            .setConstraints(constraints)
+            .build()
+
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(
+                UNIQUE_PLANNER_REFRESH_NAME,
+                ExistingWorkPolicy.REPLACE,
+                refreshPlanner
             )
     }
 }

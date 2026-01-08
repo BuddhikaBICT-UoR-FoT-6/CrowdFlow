@@ -10,7 +10,7 @@ plugins {
     alias(libs.plugins.ksp)     // Room ONLY
 
     // Firebase configuration processing
-    alias(libs.plugins.google.services)
+    // alias(libs.plugins.google.services)
 }
 
 // Fix for: NoSuchMethodError: com.squareup.javapoet.ClassName.canonicalName()
@@ -26,6 +26,10 @@ android {
     namespace = "com.example.ceylonqueuebuspulse"
     compileSdk = 35
 
+    // Read API base URL and HTTP sync feature flag from Gradle properties, with defaults
+    // Remove legacy backend configuration; Mongo is the only backend now.
+    val mongoApiBaseUrl: String = providers.gradleProperty("MONGO_API_BASE_URL").orNull ?: "http://10.0.2.2:3000/"
+
     defaultConfig {
         applicationId = "com.example.ceylonqueuebuspulse"
         minSdk = 24
@@ -33,16 +37,13 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        // KSP arguments for Room
-        ksp {
-            arg("room.schemaLocation", "$projectDir/schemas")
-            arg("room.incremental", "true")
-            arg("room.expandProjection", "true")
-        }
+        // Expose backend config to code
+        buildConfigField("String", "MONGO_API_BASE_URL", "\"${mongoApiBaseUrl}\"")
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -53,6 +54,13 @@ android {
         jvmTarget = "17"
     }
 
+}
+
+// KSP arguments for Room (top-level block as required by the KSP Gradle plugin)
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+    arg("room.incremental", "true")
+    arg("room.expandProjection", "true")
 }
 
 dependencies {
@@ -67,9 +75,6 @@ dependencies {
 
     // Material3
     implementation(libs.androidx.material3)
-    // Material icons (required for Icons.* usage)
-    implementation("androidx.compose.material:material-icons-core")
-    implementation("androidx.compose.material:material-icons-extended")
 
     // Activity Compose
     implementation(libs.androidx.activity.compose)
@@ -102,10 +107,15 @@ dependencies {
     implementation(libs.koin.androidx.compose)
     implementation(libs.koin.androidx.workmanager)
 
-    // Firebase (Phase 3 remote backend / data sync)
-    // Uses BOM to align Firebase component versions.
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.firestore.ktx)
+    // Removed Firebase dependencies (Firestore/Auth/Functions)
+    // implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    // implementation("com.google.firebase:firebase-firestore-ktx")
+    // implementation("com.google.firebase:firebase-auth-ktx")
+    // implementation("com.google.firebase:firebase-functions-ktx")
+
+    // Material icons (using version catalog would be ideal; keeping explicit for now)
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("androidx.compose.material:material-icons-extended")
 
     // Unit testing
     testImplementation(libs.junit)
