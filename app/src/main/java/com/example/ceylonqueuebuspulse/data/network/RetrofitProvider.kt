@@ -4,6 +4,7 @@
 package com.example.ceylonqueuebuspulse.data.network
 
 import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
@@ -14,16 +15,10 @@ object RetrofitProvider {
     const val BASE_URL = "https://api.example.com/" // TODO: set real backend URL
 
     // Build a Moshi instance for Kotlin JSON serialization/deserialization.
-    private val moshi: Moshi = Moshi.Builder().build()
-
-    // Lazy Retrofit API client to avoid unnecessary initialization cost.
-    val api: TrafficApi by lazy {
-        Retrofit.Builder()
-            .baseUrl(BASE_URL)
-            .addConverterFactory(MoshiConverterFactory.create(moshi))
-            .build()
-            .create(TrafficApi::class.java)
-    }
+    // KotlinJsonAdapterFactory is required for proper Kotlin data class support.
+    private val moshi: Moshi = Moshi.Builder()
+        .addLast(KotlinJsonAdapterFactory())
+        .build()
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -31,9 +26,19 @@ object RetrofitProvider {
         .writeTimeout(20, TimeUnit.SECONDS)
         .build()
 
+    // Lazy Retrofit API client to avoid unnecessary initialization cost.
+    val api: TrafficApi by lazy {
+        Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .client(client)
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
+            .build()
+            .create(TrafficApi::class.java)
+    }
+
     fun retrofit(): Retrofit = Retrofit.Builder()
         .baseUrl(BASE_URL)
-        .addConverterFactory(MoshiConverterFactory.create())
+        .addConverterFactory(MoshiConverterFactory.create(moshi))
         .client(client)
         .build()
 }
