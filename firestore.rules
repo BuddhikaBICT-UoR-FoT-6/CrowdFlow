@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Route configs: readable by all; writes blocked
+    match /routes/{routeId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Traffic samples: authenticated users only
+    match /routes/{routeId}/windows/{windowId}/segments/{segmentId}/samples/{sampleId} {
+      allow read: if true;
+      allow create: if isAuth() && isValidSample();
+      allow update, delete: if false;
+    }
+
+    // Aggregated stats: read-only from clients
+    match /routes/{routeId}/windows/{windowId}/segments/{segmentId}/stats/aggregate {
+      allow read: if true;
+      allow write: if false; // write via Admin SDK / Cloud Functions only
+    }
+
+    // Sync metadata: authenticated
+    match /syncMeta/{key} {
+      allow read, write: if isAuth();
+    }
+
+    // Test documents: allow all during development
+    match /_test/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Sample payload validation
+    function isValidSample() {
+      return request.resource.data.keys().hasAll([
+        'routeId', 'windowStartMs', 'severity', 'reportedAtMs'
+      ])
+      && request.resource.data.severity is number
+      && request.resource.data.severity >= 0
+      && request.resource.data.severity <= 5
+      && request.resource.data.windowStartMs is int
+      && request.resource.data.reportedAtMs is int;
+    }
+  }
+}

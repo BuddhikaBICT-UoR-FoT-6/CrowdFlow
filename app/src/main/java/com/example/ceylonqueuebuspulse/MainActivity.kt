@@ -136,7 +136,22 @@ class MainActivity : ComponentActivity() {
                         TopAppBar(
                             title = { Text("Bus Traffic Updates") },
                             actions = {
-                                IconButton(onClick = { viewModel.refresh() }) {
+                                IconButton(onClick = { 
+                                    // Trigger manual aggregation sync
+                                    androidx.work.WorkManager.getInstance(applicationContext)
+                                        .cancelUniqueWork("manual_aggregation")
+                                    
+                                    // Enqueue new planner worker with REPLACE policy
+                                    androidx.work.WorkManager.getInstance(applicationContext)
+                                        .enqueueUniqueWork(
+                                            "manual_aggregation",
+                                            androidx.work.ExistingWorkPolicy.REPLACE,
+                                            androidx.work.OneTimeWorkRequestBuilder<com.example.ceylonqueuebuspulse.work.AggregationPlannerWorker>().build()
+                                        )
+                                    
+                                    // Also trigger repository sync
+                                    viewModel.refresh()
+                                }) {
                                     Icon(
                                         imageVector = Icons.Filled.Refresh,
                                         contentDescription = "Refresh"
