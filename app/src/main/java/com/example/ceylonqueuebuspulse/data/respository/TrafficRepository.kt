@@ -20,15 +20,13 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-// --- Networking (Remote API) ---
-import com.example.ceylonqueuebuspulse.data.network.TrafficApi
-import com.example.ceylonqueuebuspulse.data.network.model.TrafficReportDto
-import com.example.ceylonqueuebuspulse.data.network.UserUpdateDto
+// --- Networking (Mongo API) ---
+import com.example.ceylonqueuebuspulse.data.network.model.MongoApi
+import com.example.ceylonqueuebuspulse.data.network.model.SubmitSampleRequest
 
 // --- Room DAO + entity (local persistence) ---
 import com.example.ceylonqueuebuspulse.data.local.TrafficReportDao
 import com.example.ceylonqueuebuspulse.data.local.TrafficReportEntity
-import com.example.ceylonqueuebuspulse.data.remote.firestore.dto.TrafficSampleDto
 
 /**
  * Repository that acts as the single source of truth for traffic reports.
@@ -43,12 +41,11 @@ class TrafficRepository(
     private val dao: TrafficReportDao,
     // IO dispatcher for Room and network work.
     private val io: CoroutineDispatcher = Dispatchers.IO,
-    // Remote API injected via DI (Hilt)
-    private val api: TrafficApi,
     // Application context (reserved for future needs; e.g., resources, connectivity)
     @Suppress("unused") private val appContext: Context,
     // Optional Phase 3 aggregation repo: when present, user updates are also submitted as samples.
-    private val aggregationRepository: TrafficAggregationRepository? = null
+    private val aggregationRepository: TrafficAggregationRepository? = null,
+    private val mongoApi: MongoApi
 ) {
 
     // Stream of domain models consumed by ViewModel/UI. Mapping preserves reactivity from Room.
@@ -91,23 +88,29 @@ class TrafficRepository(
         // Persist locally; UI will react via Room Flow
         dao.insertReport(report.toEntity())
 
-        // Best-effort push to backend (legacy HTTP endpoint)
-        pushUserUpdateRemote(update)
-
-        // Phase 3: submit a sample to Firestore so multi-user aggregation can run.
-        // This is best-effort and must not break offline flow.
+        // Submit sample to Mongo backend (best-effort)
         runCatching {
-            val windowStartMs = floorToWindowStart(nowMs, windowSizeMs = 15 * 60 * 1000L)
-            aggregationRepository?.submitUserSample(
-                TrafficSampleDto(
+            val windowStartMs = floorToWindowStart(nowMs, 15 * 60 * 1000L)
+            mongoApi.submitSample(
+                SubmitSampleRequest(
                     routeId = routeId,
                     windowStartMs = windowStartMs,
-                    segmentId = null,
+                    segmentId = "_all",
                     severity = report.severity.toDouble(),
-                    accuracyM = null,
-                    userIdHash = update.userId,
-                    reportedAtMs = nowMs
+                    reportedAtMs = nowMs,
+                    userIdHash = update.userId
                 )
+            )
+        }
+
+        // Optionally trigger server aggregation (non-blocking)
+        runCatching {
+            val windowStartMs = floorToWindowStart(nowMs, 15 * 60 * 1000L)
+            aggregationRepository?.aggregateAndSyncWindow(
+                routeId = routeId,
+                windowStartMs = windowStartMs,
+                segmentId = null,
+                nowMs = nowMs
             )
         }
     }
@@ -115,16 +118,6 @@ class TrafficRepository(
     private fun floorToWindowStart(tsMs: Long, windowSizeMs: Long): Long {
         if (windowSizeMs <= 0L) return tsMs
         return (tsMs / windowSizeMs) * windowSizeMs
-    }
-
-    /**
-     * Fetch from backend and merge into Room (upsert semantics).
-     * Optional until backend is live.
-     */
-    suspend fun sync(city: String? = null) = withContext(io) {
-        val remote: List<TrafficReportDto> = api.getReports(city)
-        val entities = remote.map { it.toEntity() }
-        dao.upsertAll(entities)
     }
 
     // --- Mapping helpers: Entity <-> Domain ---
@@ -148,95 +141,4 @@ class TrafficRepository(
             source = source.name,
             timestampMs = timestamp
         )
-
-    /** Map DTO (remote) into local Room entity. */
-    private fun TrafficReportDto.toEntity(): TrafficReportEntity =
-        TrafficReportEntity(
-            routeId = route,
-            severity = severity,
-            source = "HISTORICAL", // or derive from DTO if available
-            timestampMs = updatedAt
-        )
-
-    // --- Remote helpers ---
-
-    /** Push a user update to backend (best-effort) after saving locally. */
-    private suspend fun pushUserUpdateRemote(update: UserLocationUpdate) = withContext(io) {
-        runCatching {
-            val dto = update.toDto()
-            api.submitUserUpdate(dto)
-        }
-    }
-
-    /** Map domain user update to network DTO. */
-    private fun UserLocationUpdate.toDto(): UserUpdateDto =
-        UserUpdateDto(
-            userId = userId,
-            routeId = routeId,
-            lat = lat,
-            lng = lng,
-            timestampMs = timestamp
-        )
-
-    // --- Phase 3: examples for advanced flows (placeholders; safe to keep) ---
-
-    /** Save locally then try to push to backend (skeleton; replaced by submitUserUpdate). */
-    suspend fun saveUserUpdateAndPush(lat: Double, lng: Double, routeId: String) {
-        // Example placeholder kept for backwards-compatibility with callers; prefer submitUserUpdate.
-        val update = UserLocationUpdate(
-            id = System.currentTimeMillis().toString(),
-            userId = "anonymous",
-            lat = lat,
-            lng = lng,
-            timestamp = System.currentTimeMillis(),
-            routeId = routeId
-        )
-        submitUserUpdate(update)
-    }
-
-    /** Fetch remote and upsert into Room; return Unit for background/worker use. */
-    suspend fun syncRemoteToLocal() {
-        // Delegate to sync(); worker/UI callers don't need a return value.
-        sync(city = null)
-    }
-
-    /**
-     * Conflict resolution and severity aggregation example:
-     * - If same route/segment: pick the latest timestamp
-     * - Aggregate severity as a simple average between entries
-     * Replace [ReportEntity] with your real Room entity if you add segments to schema.
-     */
-    private fun mergeConflictAware(
-        local: List<ReportEntity>,
-        remote: List<ReportEntity>
-    ): List<ReportEntity> {
-        val byKey = LinkedHashMap<String, ReportEntity>()
-        // Use actual string interpolation so parameter 'e' is used and the key is meaningful
-        fun keyOf(e: ReportEntity) = "${e.routeId}:${e.segmentKey}"
-
-        (local + remote).forEach { e ->
-            val k = keyOf(e)
-            val existing = byKey[k]
-            if (existing == null) {
-                byKey[k] = e
-            } else {
-                val latestTs = maxOf(existing.timestampMs, e.timestampMs)
-                val avgSeverity = ((existing.severity + e.severity).toDouble() / 2.0)
-                    .toInt().coerceIn(0, 5)
-                byKey[k] = existing.copy(
-                    severity = avgSeverity,
-                    timestampMs = latestTs
-                )
-            }
-        }
-        return byKey.values.toList()
-    }
 }
-
-// Placeholder entity for conflict-resolution example (not used by Room).
-data class ReportEntity(
-    val routeId: String,
-    val segmentKey: String,
-    val severity: Int,
-    val timestampMs: Long
-)

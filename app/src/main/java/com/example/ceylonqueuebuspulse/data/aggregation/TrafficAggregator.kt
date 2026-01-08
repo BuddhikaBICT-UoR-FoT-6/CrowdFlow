@@ -3,7 +3,7 @@
 
 package com.example.ceylonqueuebuspulse.data.aggregation
 
-import com.example.ceylonqueuebuspulse.data.remote.firestore.dto.TrafficSampleDto
+import com.example.ceylonqueuebuspulse.data.network.model.SubmitSampleRequest
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
@@ -36,7 +36,7 @@ object TrafficAggregator {
      * @param baseWeight small constant so we never divide by zero.
      */
     fun aggregate(
-        samples: List<TrafficSampleDto>,
+        samples: List<SubmitSampleRequest>,
         nowMs: Long,
         halfLifeMs: Long = 15 * 60 * 1000L,
         baseWeight: Double = 1e-6
@@ -66,17 +66,8 @@ object TrafficAggregator {
             // Time-decay weights, so older samples influence the result less.
             val decay = exp(-lambda * ageMs.toDouble())
 
-            // Optional: downweight low accuracy points if the sender provided accuracyM.
-            // - 1.0 at <= 10m
-            // - ~0.5 at 20m
-            // - clamped to not drop below 0.2
-            val accuracyWeight = s.accuracyM?.let { accM ->
-                val ratio = 10.0 / max(10.0, accM)
-                min(1.0, max(0.2, ratio))
-            } ?: 1.0
-
-            // Always contribute at least baseWeight so wSum is never 0.
-            val w = max(baseWeight, decay * accuracyWeight)
+            // No accuracy field in SubmitSampleRequest, weight = decay.
+            val w = max(baseWeight, decay)
 
             weightSum += w
             weightedSeveritySum += w * s.severity
