@@ -1,9 +1,10 @@
-// Edited: 2025-12-27
-// Purpose: Immutable UI state model for the traffic screen; holds reports list, loading flag, and an optional error message.
+// Edited: 2026-01-08
+// Purpose: Immutable UI state model for the traffic screen; holds reports list, aggregated data, loading flag, and an optional error message.
 
 package com.example.ceylonqueuebuspulse.ui
 
 import com.example.ceylonqueuebuspulse.data.TrafficReport
+import com.example.ceylonqueuebuspulse.data.local.entity.AggregatedTrafficEntity
 
 /**
  * Immutable UI model for the traffic screen.
@@ -12,12 +13,18 @@ import com.example.ceylonqueuebuspulse.data.TrafficReport
  * Use with StateFlow in ViewModel and collect in the UI via collectAsState().
  *
  * @property reports current list of traffic reports rendered by the UI
+ * @property selectedRouteId currently selected route for viewing aggregated data
+ * @property aggregatedData Phase 3 aggregated traffic data (source of truth)
  * @property isLoading indicates when an operation is in progress
  * @property errorMessage optional human-readable error to show in the UI
  */
 data class UiState(
     // List of traffic reports emitted from the repository and displayed on the screen
     val reports: List<TrafficReport> = emptyList(),
+    // Selected route ID for viewing aggregated traffic
+    val selectedRouteId: String = "138", // Default to route 138
+    // Aggregated traffic data for the selected route (Phase 3 source of truth)
+    val aggregatedData: List<AggregatedTrafficEntity> = emptyList(),
     // True while seeding or submitting updates; allows showing a progress indicator
     val isLoading: Boolean = false,
     // Optional error message to surface to the user when operations fail

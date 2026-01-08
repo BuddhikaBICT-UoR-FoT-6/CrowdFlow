@@ -14,6 +14,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import org.koin.androidx.viewmodel.ext.android.viewModel
 
 // Compose UI
@@ -29,6 +31,7 @@ import androidx.compose.ui.unit.dp
 // Theme + ViewModel
 import com.example.ceylonqueuebuspulse.ui.theme.CeylonQueueBusPulseTheme
 import com.example.ceylonqueuebuspulse.ui.TrafficViewModel
+import com.example.ceylonqueuebuspulse.util.FirebaseTestUtil
 import com.example.ceylonqueuebuspulse.work.SyncScheduler
 
 // Google Play Services Location APIs
@@ -75,6 +78,22 @@ class MainActivity : ComponentActivity() {
 
         // Schedule periodic background sync (Phase 3)
         SyncScheduler.schedule(applicationContext)
+
+        // Initialize Firebase with test data (one-time setup)
+        // TODO: Remove after initial testing - this populates Firestore with sample data
+        // Delay slightly to avoid blocking app startup
+        lifecycleScope.launch {
+            try {
+                kotlinx.coroutines.delay(2000) // Wait 2 seconds after app starts
+                android.util.Log.d("MainActivity", "🔥 Starting Firestore initialization...")
+                FirebaseTestUtil.initializeFirestoreWithTestData()
+                android.util.Log.d("MainActivity", "✅ Firestore initialized with test data")
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "❌ Failed to initialize Firestore: ${e.message}", e)
+                // Don't crash the app - Firebase initialization is optional
+                e.printStackTrace()
+            }
+        }
 
         // Initialize fused location client and request configuration
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
@@ -145,20 +164,129 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(16.dp))
 
-                        // List current traffic reports
-                        state.reports.forEach { report ->
+                        // Route Selector
+                        Text("Select Route:", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(8.dp))
+                        val routes = listOf("138", "174", "177", "120")
+                        androidx.compose.foundation.layout.Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                        ) {
+                            routes.forEach { routeId ->
+                                androidx.compose.material3.FilterChip(
+                                    selected = state.selectedRouteId == routeId,
+                                    onClick = { viewModel.selectRoute(routeId) },
+                                    label = { Text(routeId) }
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
+                        // Current Traffic Status Card
+                        if (state.aggregatedData.isNotEmpty()) {
+                            val latest = state.aggregatedData.first()
+                            androidx.compose.material3.Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = androidx.compose.material3.CardDefaults.cardColors(
+                                    containerColor = when {
+                                        latest.severityAvg >= 4.0 -> androidx.compose.ui.graphics.Color.Red.copy(alpha = 0.2f)
+                                        latest.severityAvg >= 2.5 -> androidx.compose.ui.graphics.Color.Yellow.copy(alpha = 0.3f)
+                                        else -> androidx.compose.ui.graphics.Color.Green.copy(alpha = 0.2f)
+                                    }
+                                )
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(
+                                        text = "Current Traffic: Route ${state.selectedRouteId}",
+                                        style = MaterialTheme.typography.titleLarge
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        text = "Severity: %.1f / 5.0".format(latest.severityAvg),
+                                        style = MaterialTheme.typography.headlineMedium
+                                    )
+                                    Text(
+                                        text = "Based on ${latest.sampleCount} reports",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    latest.severityP50?.let { p50 ->
+                                        Text(
+                                            text = "Median (P50): %.1f".format(p50),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    latest.severityP90?.let { p90 ->
+                                        Text(
+                                            text = "P90: %.1f".format(p90),
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
+                                    }
+                                    val minutesAgo = (System.currentTimeMillis() - latest.lastAggregatedAtMs) / 60000
+                                    Text(
+                                        text = "Updated $minutesAgo min ago",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = androidx.compose.ui.graphics.Color.Gray
+                                    )
+                                }
+                            }
+                        } else {
                             Text(
-                                text = "Route: ${report.routeId} | Severity: ${report.severity} | Points: ${report.segment.size}"
+                                text = "No aggregated data yet for Route ${state.selectedRouteId}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = androidx.compose.ui.graphics.Color.Gray
                             )
                         }
 
                         Spacer(Modifier.height(16.dp))
 
+                        // Historical Trends
+                        Text("Recent History:", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(8.dp))
+
+                        if (state.aggregatedData.size > 1) {
+                            androidx.compose.foundation.lazy.LazyColumn(
+                                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(state.aggregatedData.size) { index ->
+                                    val agg = state.aggregatedData[index]
+                                    androidx.compose.material3.Card(
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            val timeStr = java.text.DateFormat.getTimeInstance(
+                                                java.text.DateFormat.SHORT
+                                            ).format(java.util.Date(agg.windowStartMs))
+                                            Text(
+                                                text = "Window: $timeStr",
+                                                style = MaterialTheme.typography.bodyMedium
+                                            )
+                                            Text(
+                                                text = "Avg: %.1f | P50: %.1f | P90: %.1f".format(
+                                                    agg.severityAvg,
+                                                    agg.severityP50 ?: 0.0,
+                                                    agg.severityP90 ?: 0.0
+                                                ),
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                            Text(
+                                                text = "${agg.sampleCount} samples",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = androidx.compose.ui.graphics.Color.Gray
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(16.dp))
+
                         // Sample action to submit a fixed location (Colombo)
-                        Button(onClick = { viewModel.submitUserLocation(6.9271, 79.8612, "route-1") }) {
-                            Text("Submit Sample User Update (Colombo)")
+                        Button(onClick = { viewModel.submitUserLocation(6.9271, 79.8612, state.selectedRouteId) }) {
+                            Text("Submit Sample Traffic Report")
                         }
                     }
                 }

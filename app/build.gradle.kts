@@ -1,5 +1,5 @@
-// Edited: 2026-01-06
-// Purpose: Use version catalog and pluginManagement to resolve plugins; apply Kotlin Compose compiler plugin per Kotlin 2.0 requirement; configure Koin + WorkManager + Retrofit + Room deps.
+// Edited: 2026-01-08
+// Purpose: Use version catalog and pluginManagement to resolve plugins; apply Kotlin Compose compiler plugin per Kotlin 2.0 requirement; configure Koin + WorkManager + Retrofit + Room + Firebase deps.
 
 plugins {
     alias(libs.plugins.android.application)
@@ -8,6 +8,9 @@ plugins {
 
     // Code generation
     alias(libs.plugins.ksp)     // Room ONLY
+
+    // Firebase configuration processing
+    alias(libs.plugins.google.services)
 }
 
 // Fix for: NoSuchMethodError: com.squareup.javapoet.ClassName.canonicalName()
@@ -29,6 +32,13 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+
+        // KSP arguments for Room
+        ksp {
+            arg("room.schemaLocation", "$projectDir/schemas")
+            arg("room.incremental", "true")
+            arg("room.expandProjection", "true")
+        }
     }
 
     buildFeatures {

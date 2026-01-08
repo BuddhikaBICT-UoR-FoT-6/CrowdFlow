@@ -1,5 +1,5 @@
-// Edited: 2026-01-06
-// Purpose: Root Gradle config; declare only catalog-managed plugins at root to avoid classloader issues with Hilt+KSP.
+// Edited: 2026-01-08
+// Purpose: Root Gradle config; declare only catalog-managed plugins at root to avoid classloader issues.
 
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
@@ -9,4 +9,6 @@ plugins {
     alias(libs.plugins.kotlin.kapt) apply false
     // KSP plugin alias from version catalog is "ksp" (not "kotlin.ksp")
     alias(libs.plugins.ksp) apply false
+    // Google Services plugin for Firebase (processes google-services.json)
+    alias(libs.plugins.google.services) apply false
 }

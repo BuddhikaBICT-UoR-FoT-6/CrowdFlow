@@ -7,6 +7,7 @@ import com.example.ceylonqueuebuspulse.data.remote.firestore.FirestoreTrafficDat
 import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
 import com.example.ceylonqueuebuspulse.ui.TrafficViewModel
+import com.example.ceylonqueuebuspulse.work.AggregationPlannerWorker
 import com.example.ceylonqueuebuspulse.work.FirestoreAggregationSyncWorker
 import com.example.ceylonqueuebuspulse.work.SyncWorker
 import com.google.firebase.firestore.FirebaseFirestore
@@ -34,14 +35,8 @@ val appModule = module {
 
     // --- Data sources / repositories ---
     single { FirestoreTrafficDataSource(get()) }
-    single {
-        TrafficRepository(
-            dao = get(),
-            api = get(),
-            appContext = androidContext(),
-            aggregationRepository = get()
-        )
-    }
+
+    // Create TrafficAggregationRepository FIRST (no dependencies on TrafficRepository)
     single {
         TrafficAggregationRepository(
             remote = get(),
@@ -50,13 +45,21 @@ val appModule = module {
         )
     }
 
-    // NOTE: Aggregation repositories/DAOs exist in source, but AppDatabase isn’t yet configured
-    // with their entities/DAOs. Don’t bind them here until Room schema is updated.
+    // Then create TrafficRepository (depends on TrafficAggregationRepository)
+    single {
+        TrafficRepository(
+            dao = get(),
+            api = get(),
+            appContext = androidContext(),
+            aggregationRepository = get()
+        )
+    }
 
     // --- ViewModels ---
-    viewModel { TrafficViewModel(get()) }
+    viewModel { TrafficViewModel(repository = get(), aggregationRepository = get()) }
 
     // --- WorkManager workers ---
     worker { SyncWorker(appContext = get(), params = get(), repository = get()) }
     worker { FirestoreAggregationSyncWorker(appContext = get(), params = get()) }
+    worker { AggregationPlannerWorker(appContext = get(), params = get()) }
 }

@@ -9,15 +9,33 @@ import com.example.ceylonqueuebuspulse.data.remote.firestore.FirestoreTrafficDat
 import com.example.ceylonqueuebuspulse.data.remote.firestore.dto.AggregatedTrafficDto
 import com.example.ceylonqueuebuspulse.data.remote.firestore.dto.TrafficSampleDto
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 
+/**
+ * Repository managing traffic aggregation: submits user samples, computes time-windowed aggregates,
+ * syncs with Firestore (treating remote as source of truth), and exposes aggregated data for UI.
+ */
 class TrafficAggregationRepository(
     private val remote: FirestoreTrafficDataSource,
     private val aggregatedTrafficDao: AggregatedTrafficDao,
     private val syncMetaDao: SyncMetaDao,
 ){
-    companion object{
-        private const val META_KEY = "global"
+    companion object {
+        private fun metaKey(routeId: String): String = "sync_route_$routeId"
+    }
+
+    /**
+     * Observe aggregated traffic data for a specific route, ordered by window (most recent first).
+     */
+    fun observeAggregatedTraffic(routeId: String): Flow<List<AggregatedTrafficEntity>> =
+        aggregatedTrafficDao.observeAggregates(routeId)
+
+    /**
+     * Get sync metadata for a specific route.
+     */
+    suspend fun getSyncMeta(routeId: String): SyncMetaEntity? = withContext(Dispatchers.IO) {
+        syncMetaDao.get(metaKey(routeId))
     }
 
     suspend fun submitUserSample(sample: TrafficSampleDto) {
@@ -58,12 +76,12 @@ class TrafficAggregationRepository(
 
         remote.writeAggregate(dto)
 
-        // Refresh local cache \= remote truth
+        // Refresh local cache = remote truth
         refreshWindowFromRemote(routeId, windowStartMs)
 
         syncMetaDao.upsert(
             SyncMetaEntity(
-                key = META_KEY,
+                key = metaKey(routeId),
                 lastSyncAtMs = nowMs,
                 lastWindowStartMs = windowStartMs
             )

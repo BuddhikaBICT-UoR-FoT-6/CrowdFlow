@@ -1,35 +1,44 @@
 // Kotlin
-// Edited on 2026-01-05
+// Edited on 2026-01-08
 package com.example.ceylonqueuebuspulse.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
+import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
 import com.example.ceylonqueuebuspulse.data.TrafficReport
 import com.example.ceylonqueuebuspulse.data.UserLocationUpdate
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 
 /**
  * TrafficViewModel coordinates UI state for bus traffic updates.
  *
  * Responsibilities:
  * - Observe repository's Flow of reports and expose a UI-friendly immutable StateFlow.
+ * - Observe aggregated traffic data (Phase 3 source of truth) for the selected route.
  * - Provide intents to seed sample historical data and submit user location updates.
  * - Maintain loading and error states around repository operations.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class TrafficViewModel(
     // Repository dependency. In production, inject via DI; default provided by caller.
-    private val repository: TrafficRepository
+    private val repository: TrafficRepository,
+    // Phase 3 aggregation repository
+    private val aggregationRepository: TrafficAggregationRepository
 ) : ViewModel() {
 
     /** Backing mutable state; internal only. */
     private val _uiState = MutableStateFlow(UiState())
     /** Public immutable state observed by Compose. */
     val uiState: StateFlow<UiState> = _uiState
+
+    /** Track selected route separately to avoid nested Flow issues */
+    private val _selectedRouteId = MutableStateFlow("138")
 
     init {
         // Start observing repository reports; update UI model on each emission.
@@ -42,6 +51,25 @@ class TrafficViewModel(
                 )
             }
         }
+
+        // Observe aggregated data - switch to new route's data when route changes
+        viewModelScope.launch {
+            _selectedRouteId.flatMapLatest { routeId ->
+                aggregationRepository.observeAggregatedTraffic(routeId)
+            }.collectLatest { aggregates ->
+                _uiState.value = _uiState.value.copy(
+                    aggregatedData = aggregates,
+                    selectedRouteId = _selectedRouteId.value
+                )
+            }
+        }
+    }
+
+    /**
+     * Intent: select a route for viewing aggregated traffic.
+     */
+    fun selectRoute(routeId: String) {
+        _selectedRouteId.value = routeId
     }
 
     /**

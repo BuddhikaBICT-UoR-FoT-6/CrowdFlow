@@ -1,4 +1,4 @@
-// Edited: 2026-01-07
+// Edited: 2026-01-08
 // Purpose: Room database providing DAOs for local persistence of traffic reports and aggregation data.
 
 package com.example.ceylonqueuebuspulse.data.local
@@ -7,6 +7,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.ceylonqueuebuspulse.data.local.dao.AggregatedTrafficDao
 import com.example.ceylonqueuebuspulse.data.local.dao.SyncMetaDao
 import com.example.ceylonqueuebuspulse.data.local.entity.AggregatedTrafficEntity
@@ -39,6 +41,42 @@ abstract class AppDatabase : RoomDatabase(){
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
 
+        /**
+         * Migration from version 1 to version 2.
+         * Adds aggregated_traffic and sync_meta tables for Phase 3 aggregation support.
+         */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Create aggregated_traffic table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS aggregated_traffic (
+                        routeId TEXT NOT NULL,
+                        windowStartMs INTEGER NOT NULL,
+                        segmentId TEXT NOT NULL,
+                        severityAvg REAL NOT NULL,
+                        severityP50 REAL,
+                        severityP90 REAL,
+                        sampleCount INTEGER NOT NULL,
+                        lastAggregatedAtMs INTEGER NOT NULL,
+                        PRIMARY KEY(routeId, windowStartMs, segmentId)
+                    )
+                """.trimIndent())
+
+                // Create indexes for aggregated_traffic
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_aggregated_traffic_routeId ON aggregated_traffic(routeId)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_aggregated_traffic_windowStartMs ON aggregated_traffic(windowStartMs)")
+
+                // Create sync_meta table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS sync_meta (
+                        key TEXT NOT NULL PRIMARY KEY,
+                        lastSyncAtMs INTEGER NOT NULL,
+                        lastWindowStartMs INTEGER
+                    )
+                """.trimIndent())
+            }
+        }
+
         /** Returns a singleton database instance scoped to the application context. */
         fun get(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this){
@@ -47,9 +85,9 @@ abstract class AppDatabase : RoomDatabase(){
                     AppDatabase::class.java,
                     "ceylon_queue_bus_pulse.db"
                 )
-                    // During active development, drop/recreate on schema mismatch to avoid crashes.
-                    // Replace with proper migrations before release.
-                    .fallbackToDestructiveMigration()
+                    .addMigrations(MIGRATION_1_2)
+                    // Fallback only as last resort (for dev environments) - drops all tables on unrecoverable schema errors
+                    .fallbackToDestructiveMigration(dropAllTables = true)
                     .build().also { INSTANCE = it }
             }
 
