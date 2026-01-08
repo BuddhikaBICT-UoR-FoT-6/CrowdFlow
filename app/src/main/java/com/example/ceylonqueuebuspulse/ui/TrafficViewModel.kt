@@ -8,6 +8,8 @@ import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
 import com.example.ceylonqueuebuspulse.data.TrafficReport
 import com.example.ceylonqueuebuspulse.data.UserLocationUpdate
+import com.example.ceylonqueuebuspulse.util.NetworkException
+import com.example.ceylonqueuebuspulse.util.RetryUtil
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -107,7 +109,7 @@ class TrafficViewModel(
         viewModelScope.launch {
             // Simple validation to avoid bad inputs
             if (routeId.isBlank()) {
-                _uiState.value = _uiState.value.copy(errorMessage = "Route id is required")
+                _uiState.value = _uiState.value.copy(errorMessage = "Route ID is required")
                 return@launch
             }
             // Enter loading state and clear any prior error.
@@ -125,12 +127,20 @@ class TrafficViewModel(
                 // Delegate persistence to repository.
                 repository.submitUserUpdate(update)
                 // Exit loading state after successful submission.
-                _uiState.value = _uiState.value.copy(isLoading = false)
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = null
+                )
             } catch (t: Throwable) {
+                // Map to user-friendly error message
+                val friendlyMessage = when (val mapped = RetryUtil.mapException(t)) {
+                    is NetworkException -> mapped.message ?: "Failed to submit traffic report"
+                }
+
                 // Surface a friendly error and exit loading.
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    errorMessage = t.message ?: "Failed to submit update"
+                    errorMessage = friendlyMessage
                 )
             }
         }
@@ -142,19 +152,36 @@ class TrafficViewModel(
      * Sets isSyncing, clears error, delegates to repository.sync(). On success, updates
      * lastUpdatedMs; on failure, sets errorMessage. Always clears isSyncing at the end.
      */
-    fun refresh(city: String? = null) {
+    fun refresh() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSyncing = true, errorMessage = null)
             try {
-                repository.sync(city)
+                // Refresh aggregates for selected route/window from Mongo backend
+                val routeId = _selectedRouteId.value
+                val nowMs = System.currentTimeMillis()
+                val windowSizeMs = 15 * 60 * 1000L
+                val windowStartMs = (nowMs / windowSizeMs) * windowSizeMs
+
+                aggregationRepository.aggregateAndSyncWindow(
+                    routeId = routeId,
+                    windowStartMs = windowStartMs,
+                    segmentId = null,
+                    nowMs = nowMs
+                )
+
                 _uiState.value = _uiState.value.copy(
                     isSyncing = false,
-                    lastUpdatedMs = System.currentTimeMillis()
+                    lastUpdatedMs = System.currentTimeMillis(),
+                    errorMessage = null
                 )
             } catch (t: Throwable) {
+                val friendlyMessage = when (val mapped = RetryUtil.mapException(t)) {
+                    is NetworkException -> mapped.message ?: "Failed to sync data"
+                }
+
                 _uiState.value = _uiState.value.copy(
                     isSyncing = false,
-                    errorMessage = t.message ?: "Failed to sync"
+                    errorMessage = friendlyMessage
                 )
             }
         }

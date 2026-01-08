@@ -19,6 +19,6 @@ data class AggregatedTrafficEntity(
     val severityAvg: Double,
     val severityP50: Double?,
     val severityP90: Double?,
-    val sampleCount: Long,
+    val sampleCount: Int,
     val lastAggregatedAtMs: Long
 )

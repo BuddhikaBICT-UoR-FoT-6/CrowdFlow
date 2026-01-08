@@ -7,13 +7,29 @@
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
+.idea/**
+!.idea/codeStyles/**
+!.idea/inspectionProfiles/**
+!.idea/misc.xml
 .DS_Store
 /build
 /captures
 .externalNativeBuild
 .cxx
 local.properties
+.env
+
+# Node/Express server
+server/node_modules/
+server/dist/
+server/.env
+server/.env.*
+server/npm-debug.log*
+server/yarn-debug.log*
+server/yarn-error.log*
 
 # Firebase configuration (contains API keys - keep private)
 google-services.json
-
+firebase.json
+.firebaserc
+functions/
