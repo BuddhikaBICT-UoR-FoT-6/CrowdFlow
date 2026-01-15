@@ -30,7 +30,7 @@ val appModule = module {
     // Auth API must work even when we don't yet have a token.
     single(named("auth")) { RetrofitProvider.mongoRetrofit() }
     single<AuthApi> { get<retrofit2.Retrofit>(named("auth")).create(AuthApi::class.java) }
-    single { AuthRepository(api = get(), tokenStore = get()) }
+    single { AuthRepository(api = get(), tokenStore = get(), context = androidContext()) }
 
     // Main API uses tokens + auto-refresh
     single(named("mongo")) { RetrofitProvider.mongoRetrofit(tokenStore = get(), authRepository = get()) }
