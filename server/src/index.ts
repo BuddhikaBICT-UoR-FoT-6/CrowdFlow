@@ -16,7 +16,8 @@ dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Set a conservative global JSON body limit to protect against huge payloads (1MB)
+app.use(express.json({ limit: '1mb' }));
 
 // Respect proxy headers (X-Forwarded-For) when behind a proxy/load-balancer.
 // Set to true for generic setups; in production you may prefer a restricted list
@@ -44,6 +45,8 @@ mongoose
   });
 
 // Schemas
+const SAMPLE_RETENTION_DAYS = Number(process.env.SAMPLE_RETENTION_DAYS || '30');
+
 const SampleSchema = new mongoose.Schema(
   {
     routeId: { type: String, required: true, index: true },
@@ -52,10 +55,15 @@ const SampleSchema = new mongoose.Schema(
     severity: { type: Number, required: true, min: 0, max: 5 },
     reportedAtMs: { type: Number, required: true, index: true },
     userIdHash: { type: String },
+    createdAt: { type: Date, required: true, default: () => new Date(), index: true },
   },
   { timestamps: false, versionKey: false }
 );
-SampleSchema.index({ routeId: 1, windowStartMs: 1, segmentId: 1, reportedAtMs: -1 });
+// TTL index to automatically remove old samples
+if (SAMPLE_RETENTION_DAYS > 0) {
+  const seconds = SAMPLE_RETENTION_DAYS * 24 * 60 * 60;
+  SampleSchema.index({ createdAt: 1 }, { expireAfterSeconds: seconds });
+}
 
 const AggregateSchema = new mongoose.Schema(
   {
@@ -74,6 +82,9 @@ AggregateSchema.index({ routeId: 1, windowStartMs: 1, segmentId: 1 }, { unique: 
 
 const Sample = mongoose.model('Sample', SampleSchema);
 const Aggregate = mongoose.model('Aggregate', AggregateSchema);
+
+// Export models so other scripts (aggregator) can import them
+export { Sample, Aggregate };
 
 // Validation schemas
 const submitSampleSchema = z.object({
@@ -122,6 +133,9 @@ function computeStats(values: number[]) {
   const p = (q: number) => sorted[Math.floor(q * (len - 1))];
   return { avg, p50: p(0.5), p90: p(0.9), count: len };
 }
+
+// Export helper for aggregator scripts
+export { computeStats };
 
 // Health check (useful for emulator connectivity testing)
 app.get('/health', (_req: Request, res: Response) => {
@@ -346,16 +360,42 @@ app.delete('/api/v1/admin/blocks/:key', requireAuth, requireRole(['superadmin'])
 });
 
 // Routes
-app.post('/api/v1/samples', requireAuth, async (req: AuthedRequest, res: Response) => {
-  try {
-    const parsed = submitSampleSchema.parse(req.body);
-    await Sample.create(parsed);
-    res.status(201).json({ ok: true });
-  } catch (e: any) {
-    console.error('/samples error', e);
-    res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
-  }
-});
+app.post(
+  '/api/v1/samples',
+  requireAuth,
+  trafficSamplesLimiter,
+  duplicateSubmissionProtection(60 * 5),
+  async (req: AuthedRequest, res: Response) => {
+    try {
+      const body = req.body;
+      const MAX_SAMPLES = 1000; // per-request limit
+
+      const samplesArray = Array.isArray(body) ? body : [body];
+      if (samplesArray.length === 0) {
+        return res.status(400).json({ ok: false, error: 'Empty payload' });
+      }
+      if (samplesArray.length > MAX_SAMPLES) {
+        return res.status(413).json({ ok: false, error: `Too many samples - max ${MAX_SAMPLES}` });
+      }
+
+      // Validate each sample using submitSampleSchema
+      const parsed: any[] = [];
+      for (const s of samplesArray) {
+        const p = submitSampleSchema.parse(s);
+        parsed.push(p);
+      }
+
+      // Bulk insert
+      await Sample.insertMany(parsed, { ordered: false });
+      res.status(201).json({ ok: true, inserted: parsed.length });
+    } catch (e: any) {
+      console.error('/samples error', e);
+      // Zod validation errors will be caught here
+      res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
+    }
+  },
+);
+
 
 app.post('/api/v1/aggregate', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {

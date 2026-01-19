@@ -43,17 +43,14 @@ class TrafficRepository(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     // Application context (reserved for future needs; e.g., resources, connectivity)
     @Suppress("unused") private val appContext: Context,
-    // Optional Phase 3 aggregation repo: when present, user updates are also submitted as samples.
-    private val aggregationRepository: TrafficAggregationRepository? = null,
-    private val mongoApi: MongoApi
+    private val mongoApi: MongoApi,
+    // Optional batcher for sending samples efficiently
+    private val sampleBatcher: com.example.ceylonqueuebuspulse.data.network.SampleBatcher? = null
 ) {
 
     // Stream of domain models consumed by ViewModel/UI. Mapping preserves reactivity from Room.
     val reports: Flow<List<TrafficReport>> =
         dao.observeReports().map { entities -> entities.map { it.toDomain() } }
-
-    // Expose Room flow directly if needed elsewhere (legacy/debug usage).
-    fun observeReports(): Flow<List<TrafficReportEntity>> = dao.observeReports()
 
     /**
      * Replace all existing reports with the provided historical samples.
@@ -68,10 +65,6 @@ class TrafficRepository(
     /**
      * Convert a user location update into a traffic report and persist it locally.
      * Then best-effort push the update to the backend (fire-and-forget).
-     *
-     * Notes:
-     * - Route mapping is currently naive: falls back to "unknown" when routeId is null.
-     * - Severity is a placeholder heuristic and can be replaced with a smarter algorithm.
      */
     suspend fun submitUserUpdate(update: UserLocationUpdate) = withContext(io) {
         val nowMs = System.currentTimeMillis()
@@ -88,36 +81,29 @@ class TrafficRepository(
         // Persist locally; UI will react via Room Flow
         dao.insertReport(report.toEntity())
 
-        // Submit sample to Mongo backend (best-effort)
-        runCatching {
-            val windowStartMs = floorToWindowStart(nowMs, 15 * 60 * 1000L)
-            mongoApi.submitSample(
-                SubmitSampleRequest(
-                    routeId = routeId,
-                    windowStartMs = windowStartMs,
-                    segmentId = "_all",
-                    severity = report.severity.toDouble(),
-                    reportedAtMs = nowMs,
-                    userIdHash = update.userId
-                )
-            )
+        // Compute window start inline (avoid unused-parameter inspection)
+        val windowSizeMs = 15 * 60 * 1000L
+        val windowStartMs = (nowMs / windowSizeMs) * windowSizeMs
+
+        val sample = SubmitSampleRequest(
+            routeId = routeId,
+            windowStartMs = windowStartMs,
+            segmentId = "_all",
+            severity = report.severity.toDouble(),
+            reportedAtMs = nowMs,
+            userIdHash = update.userId
+        )
+
+        // Submit sample via batcher if available, otherwise fall back to direct API call
+        if (sampleBatcher != null) {
+            sampleBatcher.submit(sample)
+        } else {
+            runCatching {
+                mongoApi.submitSample(sample)
+            }
         }
 
-        // Optionally trigger server aggregation (non-blocking)
-        runCatching {
-            val windowStartMs = floorToWindowStart(nowMs, 15 * 60 * 1000L)
-            aggregationRepository?.aggregateAndSyncWindow(
-                routeId = routeId,
-                windowStartMs = windowStartMs,
-                segmentId = null,
-                nowMs = nowMs
-            )
-        }
-    }
-
-    private fun floorToWindowStart(tsMs: Long, windowSizeMs: Long): Long {
-        if (windowSizeMs <= 0L) return tsMs
-        return (tsMs / windowSizeMs) * windowSizeMs
+        // Server-side aggregation will run on backend; no client aggregation here.
     }
 
     // --- Mapping helpers: Entity <-> Domain ---

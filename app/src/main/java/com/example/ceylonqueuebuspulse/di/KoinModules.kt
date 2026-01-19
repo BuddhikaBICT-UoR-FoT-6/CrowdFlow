@@ -45,6 +45,11 @@ val appModule = module {
     single { get<AppDatabase>().aggregatedTrafficDao() }
     single { get<AppDatabase>().syncMetaDao() }
 
+    // --- Sample batcher for efficient sample submissions ---
+    single {
+        com.example.ceylonqueuebuspulse.data.network.SampleBatcher(api = get())
+    }
+
     // --- Repositories ---
     single {
         TrafficAggregationRepository(
@@ -58,8 +63,8 @@ val appModule = module {
         TrafficRepository(
             dao = get(),
             appContext = androidContext(),
-            aggregationRepository = get(),
-            mongoApi = get()
+            mongoApi = get(),
+            sampleBatcher = get()
         )
     }
 

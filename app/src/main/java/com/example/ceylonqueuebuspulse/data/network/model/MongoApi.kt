@@ -13,12 +13,6 @@ data class SubmitSampleRequest(
     val userIdHash: String? = null
 )
 
-data class AggregateRequest(
-    val routeId: String,
-    val windowStartMs: Long,
-    val segmentId: String = "_all"
-)
-
 data class AggregateDto(
     val routeId: String,
     val windowStartMs: Long,
@@ -41,8 +35,8 @@ interface MongoApi {
     @POST("api/v1/samples")
     suspend fun submitSample(@Body body: SubmitSampleRequest): ApiResponse<Map<String, Any>>
 
-    @POST("api/v1/aggregate")
-    suspend fun aggregateWindow(@Body body: AggregateRequest): ApiResponse<AggregateDto>
+    @POST("api/v1/samples")
+    suspend fun submitSamples(@Body body: List<SubmitSampleRequest>): ApiResponse<Map<String, Any>>
 
     @GET("api/v1/aggregates")
     suspend fun getAggregates(
@@ -50,4 +44,3 @@ interface MongoApi {
         @Query("windowStartMs") windowStartMs: Long
     ): ApiResponse<List<AggregateDto>>
 }
-
