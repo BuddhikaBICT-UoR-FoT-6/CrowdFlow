@@ -4,7 +4,6 @@ import com.example.ceylonqueuebuspulse.data.local.dao.AggregatedTrafficDao
 import com.example.ceylonqueuebuspulse.data.local.dao.SyncMetaDao
 import com.example.ceylonqueuebuspulse.data.local.entity.AggregatedTrafficEntity
 import com.example.ceylonqueuebuspulse.data.local.entity.SyncMetaEntity
-import com.example.ceylonqueuebuspulse.data.network.model.AggregateRequest
 import com.example.ceylonqueuebuspulse.data.network.model.MongoApi
 import com.example.ceylonqueuebuspulse.data.network.model.SubmitSampleRequest
 import kotlinx.coroutines.Dispatchers
@@ -57,8 +56,9 @@ class TrafficAggregationRepository(
     }
 
     /**
-     * Reads samples, computes aggregate, writes to Firestore, then refreshes Room from Firestore aggregate.
-     * Remote aggregate is treated as truth \-> Room window is overwritten.
+     * Fetch aggregates from remote and upsert into Room.
+     * NOTE: This method intentionally does NOT trigger server-side aggregation. The backend is responsible
+     * for precomputing aggregates (scheduled or via server worker). The client should only read aggregates.
      */
     suspend fun aggregateAndSyncWindow(
         routeId: String,
@@ -66,10 +66,7 @@ class TrafficAggregationRepository(
         segmentId: String?,
         nowMs: Long,
     ) = withContext(Dispatchers.IO) {
-        // Ask server to compute and upsert aggregate
-        mongoApi.aggregateWindow(
-            AggregateRequest(routeId = routeId, windowStartMs = windowStartMs, segmentId = segmentId ?: "_all")
-        )
+        // DO NOT ask server to compute aggregates; server-side aggregation should be handled independently.
 
         // Fetch aggregates for window
         val resp = mongoApi.getAggregates(routeId = routeId, windowStartMs = windowStartMs)
