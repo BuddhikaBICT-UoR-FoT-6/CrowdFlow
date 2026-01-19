@@ -1,7 +1,8 @@
 import type { Request, Response, NextFunction } from 'express';
-import jwt, { type SignOptions, type Secret, type JwtPayload } from 'jsonwebtoken';
+import * as jwt from 'jsonwebtoken';
+import type { SignOptions, Secret, JwtPayload } from 'jsonwebtoken';
 import { User, type UserRole } from './models/User';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { RefreshTokenModel } from './models/RefreshToken';
 
 export const DEFAULT_ACCESS_EXPIRES = process.env.JWT_EXPIRES_IN || '15m';
