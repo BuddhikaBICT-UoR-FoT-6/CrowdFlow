@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
 import { redisClient } from './rateLimiter';
 
 /**

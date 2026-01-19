@@ -1,8 +1,9 @@
-import express, { type Request, type Response } from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
+import express = require('express');
+import type { Request, Response } from 'express';
+import cors = require('cors');
+import dotenv = require('dotenv');
 import mongoose from 'mongoose';
-import bcrypt from 'bcrypt';
+import bcrypt = require('bcrypt');
 import { z } from 'zod';
 import { requireAuth, signAccessToken, type AuthedRequest, signRefreshToken, verifyRefreshToken, verifyTokenMiddleware, rotateRefreshToken, revokeRefreshTokenByJti, revokeAllTokensForUser } from './auth';
 import { User, type UserRole } from './models/User';
@@ -10,6 +11,8 @@ import { RefreshTokenModel } from './models/RefreshToken';
 import { requireRole } from './roles';
 import { loginLimiter, registerLimiter, trafficSamplesLimiter, getRecentRateLimitBlocks, listBlockedKeys, removeBlockedKey } from './middleware/rateLimiter';
 import { duplicateSubmissionProtection } from './middleware/duplicateDetection';
+import tomtomDebugRoute from './routes/tomtomDebugRoute';
+import { startTomTomScheduler } from './tasks/tomtomScheduler';
 
 
 dotenv.config();
@@ -141,6 +144,9 @@ export { computeStats };
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
+
+// Mount TomTom debug route (provides GET /api/v1/debug/provider/point)
+app.use(tomtomDebugRoute);
 
 // --- Auth routes ---
 app.post('/api/v1/auth/register', registerLimiter, async (req: Request, res: Response) => {
@@ -470,7 +476,47 @@ app.post(
   verifyTokenMiddleware,         // must set req.user
   trafficSamplesLimiter,         // per-user + per-ip limits
   duplicateSubmissionProtection(60 * 5), // 5min duplicate TTL
-  async (req, res) => {
-    // handle sample submission
+  async (req: AuthedRequest, res: Response) => {
+    try {
+      const body = req.body;
+      const MAX_SAMPLES = 1000; // per-request limit
+
+      const samplesArray = Array.isArray(body) ? body : [body];
+      if (samplesArray.length === 0) {
+        return res.status(400).json({ ok: false, error: 'Empty payload' });
+      }
+      if (samplesArray.length > MAX_SAMPLES) {
+        return res.status(413).json({ ok: false, error: `Too many samples - max ${MAX_SAMPLES}` });
+      }
+
+      // Validate each sample using submitSampleSchema and attach userIdHash if missing
+      const parsed: any[] = [];
+      for (const s of samplesArray) {
+        const p = submitSampleSchema.parse(s);
+        // Prefer explicit userIdHash from payload; if missing, attach authenticated user id
+        if (!p.userIdHash && req.user && req.user.sub) {
+          p.userIdHash = String(req.user.sub);
+        }
+        parsed.push(p);
+      }
+
+      // Bulk insert into samples collection
+      await Sample.insertMany(parsed, { ordered: false });
+      res.status(201).json({ ok: true, inserted: parsed.length });
+    } catch (e: any) {
+      console.error('/traffic/samples error', e);
+      // Zod validation errors or other issues
+      res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
+    }
   },
 );
+
+// Only start TomTom scheduler when explicitly enabled in env
+if (process.env.ENABLE_TOMTOM_SCHEDULER === 'true') {
+  try {
+    startTomTomScheduler();
+    console.log('TomTom scheduler enabled');
+  } catch (e) {
+    console.error('Failed to start TomTom scheduler', (e as any)?.message || e);
+  }
+}

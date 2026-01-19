@@ -132,7 +132,9 @@ export async function listBlockedKeys(limit = 200){
         // return in-memory blocked keys
         const now = Date.now();
         const arr: any[] = [];
-        for(const [k, v] of inMemoryBlocklist.entries()){
+        for(const entry of Array.from(inMemoryBlocklist.entries())){
+            const k = entry[0];
+            const v = entry[1];
             if(k.startsWith('block:')){
                 const ttl = Math.max(0, Math.round(((v as number) - now) / 1000));
                 arr.push({ key: k.replace(/^block:/, ''), ttl });
