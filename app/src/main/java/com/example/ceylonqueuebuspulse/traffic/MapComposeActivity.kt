@@ -54,10 +54,13 @@ class MapComposeActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
 
+        val initialRouteId = intent.getStringExtra(EXTRA_ROUTE_ID)?.trim().takeUnless { it.isNullOrEmpty() } ?: "138"
+
         setContent {
             MapComposeScreen(
                 vm = vm,
                 locVm = locVm,
+                initialRouteId = initialRouteId,
                 onRequestLocationPermission = {
                     locationPermissionLauncher.launch(
                         arrayOf(
@@ -76,6 +79,10 @@ class MapComposeActivity : ComponentActivity() {
                 }
             )
         }
+    }
+
+    companion object {
+        const val EXTRA_ROUTE_ID = "extra_route_id"
     }
 
     @SuppressLint("MissingPermission")
@@ -116,6 +123,7 @@ class MapComposeActivity : ComponentActivity() {
 fun MapComposeScreen(
     vm: MapComposeViewModel,
     locVm: LocationTrafficViewModel,
+    initialRouteId: String,
     onRequestLocationPermission: () -> Unit,
     onStartLocation: (WebView) -> Unit,
     onStopLocation: () -> Unit,
@@ -152,7 +160,10 @@ fun MapComposeScreen(
         mutableStateOf(lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true || lm?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true)
     }
 
+    var selectedRouteId by remember { mutableStateOf(initialRouteId) }
+
     Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+        // Search
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextField(value = query, onValueChange = { query = it }, modifier = Modifier.weight(1f))
             Button(onClick = { vm.search(query, "") }) { Text("Search") }
@@ -160,6 +171,19 @@ fun MapComposeScreen(
 
         Spacer(Modifier.height(8.dp))
 
+        // Route selector (drives which points are displayed on the map)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("138", "174", "177", "120").forEach { routeId ->
+                OutlinedButton(
+                    onClick = { selectedRouteId = routeId },
+                    enabled = selectedRouteId != routeId
+                ) { Text(routeId) }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // Location controls
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = {
                 refreshPermissionState()
@@ -198,15 +222,17 @@ fun MapComposeScreen(
             factory = { ctx ->
                 val wv = WebView(ctx)
                 webViewRef = wv
-                setupWebViewForLeaflet(wv, ctx) { lat, lon ->
-                    onMapClick(lat, lon)
-                }
-                // Start location updates if permission already granted
+                setupWebViewForLeaflet(wv, onMapClick = { lat, lon -> onMapClick(lat, lon) })
+
                 refreshPermissionState()
                 if (fineGranted.value || coarseGranted.value) {
                     onStartLocation(wv)
                 }
                 wv
+            },
+            update = { wv ->
+                // keep reference fresh for LaunchedEffects
+                webViewRef = wv
             },
             modifier = Modifier
                 .fillMaxWidth()
@@ -244,11 +270,9 @@ fun MapComposeScreen(
         }
     }
 
-    // Trigger load of route points for a demo route when screen opens.
-    LaunchedEffect(Unit) {
-        // For now, use a default routeId to demonstrate markers.
-        // TODO: wire to UI-selected route once Map screen knows it.
-        locVm.loadRoutePoints(routeId = "138", maxPoints = 12)
+    // Load route points whenever selected route changes.
+    LaunchedEffect(selectedRouteId) {
+        locVm.loadRoutePoints(routeId = selectedRouteId, maxPoints = 12)
     }
 
     // When points change, push them into the map.
@@ -278,7 +302,7 @@ fun MapComposeScreen(
 }
 
 @SuppressLint("SetJavaScriptEnabled")
-private fun setupWebViewForLeaflet(wv: WebView, ctx: Context, onMapClick: (Double, Double) -> Unit) {
+private fun setupWebViewForLeaflet(wv: WebView, onMapClick: (Double, Double) -> Unit) {
     val settings: WebSettings = wv.settings
     settings.javaScriptEnabled = true
     settings.domStorageEnabled = true
