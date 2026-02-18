@@ -4,6 +4,7 @@ package com.example.ceylonqueuebuspulse.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.ceylonqueuebuspulse.data.repository.AppResult
 import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
 import com.example.ceylonqueuebuspulse.data.TrafficReport
@@ -19,31 +20,19 @@ import kotlinx.coroutines.launch
 
 /**
  * TrafficViewModel coordinates UI state for bus traffic updates.
- *
- * Responsibilities:
- * - Observe repository's Flow of reports and expose a UI-friendly immutable StateFlow.
- * - Observe aggregated traffic data (Phase 3 source of truth) for the selected route.
- * - Provide intents to seed sample historical data and submit user location updates.
- * - Maintain loading and error states around repository operations.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrafficViewModel(
-    // Repository dependency. In production, inject via DI; default provided by caller.
     private val repository: TrafficRepository,
-    // Phase 3 aggregation repository
     private val aggregationRepository: TrafficAggregationRepository
 ) : ViewModel() {
 
-    /** Backing mutable state; internal only. */
     private val _uiState = MutableStateFlow(UiState())
-    /** Public immutable state observed by Compose. */
     val uiState: StateFlow<UiState> = _uiState
 
-    /** Track selected route separately to avoid nested Flow issues */
     private val _selectedRouteId = MutableStateFlow("138")
 
     init {
-        // Start observing repository reports; update UI model on each emission.
         viewModelScope.launch {
             repository.reports.collectLatest { list ->
                 _uiState.value = _uiState.value.copy(
@@ -54,7 +43,6 @@ class TrafficViewModel(
             }
         }
 
-        // Observe aggregated data - switch to new route's data when route changes
         viewModelScope.launch {
             _selectedRouteId.flatMapLatest { routeId ->
                 aggregationRepository.observeAggregatedTraffic(routeId)
@@ -67,101 +55,59 @@ class TrafficViewModel(
         }
     }
 
-    /**
-     * Intent: select a route for viewing aggregated traffic.
-     */
     fun selectRoute(routeId: String) {
         _selectedRouteId.value = routeId
     }
 
-    /**
-     * Intent: seed historical data into the repository.
-     *
-     * Sets loading, clears previous errors, then attempts seeding with provided sample reports.
-     * On failure, updates errorMessage and clears loading; on success, clears loading.
-     */
     fun seedHistoricalData(sample: List<TrafficReport>) {
         viewModelScope.launch {
-            // Enter loading state and clear any prior error.
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-            try {
-                // Delegate to repository to replace current data with samples.
-                repository.seedHistoricalData(sample)
-                // Exit loading state after successful seeding.
-                _uiState.value = _uiState.value.copy(isLoading = false)
-            } catch (t: Throwable) {
-                // Surface a friendly error and exit loading.
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    errorMessage = t.message ?: "Failed to seed data"
-                )
+            when (val result = repository.seedHistoricalData(sample)) {
+                is AppResult.Ok -> _uiState.value = _uiState.value.copy(isLoading = false)
+                is AppResult.Err -> _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = result.error.userMessage)
             }
         }
     }
 
-    /**
-     * Intent: submit a user location update for a bus route.
-     *
-     * Validates inputs, sets loading, and delegates to repository by wrapping parameters
-     * into a UserLocationUpdate data object. On failure, surfaces a user-friendly errorMessage.
-     */
     fun submitUserLocation(lat: Double, lng: Double, routeId: String) {
         viewModelScope.launch {
-            // Simple validation to avoid bad inputs
             if (routeId.isBlank()) {
                 _uiState.value = _uiState.value.copy(errorMessage = "Route ID is required")
                 return@launch
             }
-            // Enter loading state and clear any prior error.
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-            try {
-                // Wrap parameters into a domain update model.
-                val update = UserLocationUpdate(
-                    id = System.currentTimeMillis().toString(),
-                    userId = "anonymous", // Replace with real user id when available
-                    lat = lat,
-                    lng = lng,
-                    timestamp = System.currentTimeMillis(),
-                    routeId = routeId
-                )
-                // Delegate persistence to repository.
-                repository.submitUserUpdate(update)
-                // Exit loading state after successful submission.
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    errorMessage = null
-                )
-            } catch (t: Throwable) {
-                // Map to user-friendly error message
-                val friendlyMessage = when (val mapped = RetryUtil.mapException(t)) {
-                    is NetworkException -> mapped.message ?: "Failed to submit traffic report"
+
+            val update = UserLocationUpdate(
+                id = System.currentTimeMillis().toString(),
+                userId = "anonymous",
+                lat = lat,
+                lng = lng,
+                timestamp = System.currentTimeMillis(),
+                routeId = routeId
+            )
+
+            when (val result = repository.submitUserUpdate(update)) {
+                is AppResult.Ok -> {
+                    _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = null)
                 }
 
-                // Surface a friendly error and exit loading.
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    errorMessage = friendlyMessage
-                )
+                is AppResult.Err -> {
+                    _uiState.value = _uiState.value.copy(isLoading = false, errorMessage = result.error.userMessage)
+                }
             }
         }
     }
 
-    /**
-     * Intent: refresh from remote backend and upsert into Room.
-     *
-     * Sets isSyncing, clears error, delegates to repository.sync(). On success, updates
-     * lastUpdatedMs; on failure, sets errorMessage. Always clears isSyncing at the end.
-     */
     fun refresh() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isSyncing = true, errorMessage = null)
             try {
-                // Refresh aggregates for selected route/window from Mongo backend
                 val routeId = _selectedRouteId.value
                 val nowMs = System.currentTimeMillis()
                 val windowSizeMs = 15 * 60 * 1000L
                 val windowStartMs = (nowMs / windowSizeMs) * windowSizeMs
 
+                // We keep existing method call to avoid touching Worker callers.
                 aggregationRepository.aggregateAndSyncWindow(
                     routeId = routeId,
                     windowStartMs = windowStartMs,
@@ -187,7 +133,6 @@ class TrafficViewModel(
         }
     }
 
-    /** Clears the current error message from the UI state. */
     fun clearError() {
         _uiState.value = _uiState.value.copy(errorMessage = null)
     }
