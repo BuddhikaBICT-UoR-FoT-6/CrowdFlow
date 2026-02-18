@@ -6,6 +6,7 @@ import com.example.ceylonqueuebuspulse.data.network.DebugApi
 import com.example.ceylonqueuebuspulse.data.network.model.ApiResponse
 import com.example.ceylonqueuebuspulse.data.repository.AppResult
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
+import com.example.ceylonqueuebuspulse.data.network.RoutePoint
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +26,9 @@ class LocationTrafficViewModel(
     private val _status = MutableStateFlow<String?>(null)
     val status: StateFlow<String?> = _status.asStateFlow()
 
+    private val _routePoints = MutableStateFlow<List<RoutePoint>>(emptyList())
+    val routePoints: StateFlow<List<RoutePoint>> = _routePoints.asStateFlow()
+
     fun selectLocation(lat: Double, lon: Double) {
         _status.value = "Looking up provider data..."
         viewModelScope.launch {
@@ -38,6 +42,20 @@ class LocationTrafficViewModel(
                 }
             } catch (e: Exception) {
                 _status.value = "Provider lookup failed: ${e.message}"
+            }
+        }
+    }
+
+    fun loadRoutePoints(routeId: String, maxPoints: Int = 12) {
+        if (routeId.isBlank()) return
+        viewModelScope.launch {
+            try {
+                val resp = debugApi.routePoints(routeId = routeId, maxPoints = maxPoints)
+                if (resp.ok && resp.data != null) {
+                    _routePoints.value = resp.data.points
+                }
+            } catch (_: Exception) {
+                // Ignore: map can still work without route points.
             }
         }
     }
