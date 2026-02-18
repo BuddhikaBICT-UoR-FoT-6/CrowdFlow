@@ -10,6 +10,7 @@ import com.example.ceylonqueuebuspulse.data.network.DebugApi
 import com.example.ceylonqueuebuspulse.data.network.TomTomSearchApi
 import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
+import com.example.ceylonqueuebuspulse.settings.SettingsRepository
 import com.example.ceylonqueuebuspulse.ui.TrafficViewModel
 import com.example.ceylonqueuebuspulse.ui.auth.AuthViewModel
 import com.example.ceylonqueuebuspulse.traffic.MapComposeViewModel
@@ -108,4 +109,7 @@ val appModule = module {
     // --- WorkManager workers ---
     worker { AggregationPlannerWorker(appContext = get(), params = get()) }
     worker { MongoAggregationSyncWorker(appContext = get(), params = get()) }
+
+    // --- Settings (DataStore) ---
+    single { SettingsRepository(androidContext()) }
 }
