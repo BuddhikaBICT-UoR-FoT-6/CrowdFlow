@@ -11,6 +11,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -137,6 +138,9 @@ class MainActivity : ComponentActivity() {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
+
+        // Handle deep link if app launched from a URI.
+        handleDeepLink(intent?.data)
 
         // Compose UI content
         setContent {
@@ -527,6 +531,46 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.align(Alignment.TopCenter)
                         )
                     }
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent?) {
+        super.onNewIntent(intent)
+        handleDeepLink(intent?.data)
+    }
+
+    private fun handleDeepLink(uri: Uri?) {
+        if (uri == null) return
+        if (uri.scheme != "ceylonqueue") return
+
+        when (uri.host) {
+            "route" -> {
+                // Support: ceylonqueue://route?routeId=138
+                val routeId = uri.getQueryParameter("routeId")?.trim().orEmpty()
+                if (routeId.isNotEmpty()) {
+                    viewModel.selectRoute(routeId)
+                    viewModel.refresh()
+                }
+            }
+
+            "report" -> {
+                // Support: ceylonqueue://report?routeId=138&windowStartMs=...&severityAvg=...&sampleCount=...
+                val routeId = uri.getQueryParameter("routeId")?.trim().orEmpty()
+                val windowStartMs = uri.getQueryParameter("windowStartMs")?.toLongOrNull() ?: -1L
+                val severityAvg = uri.getQueryParameter("severityAvg")?.toDoubleOrNull() ?: Double.NaN
+                val sampleCount = uri.getQueryParameter("sampleCount")?.toIntOrNull() ?: -1
+
+                if (routeId.isNotEmpty() && windowStartMs > 0) {
+                    startActivity(
+                        android.content.Intent(this, com.example.ceylonqueuebuspulse.ui.TrafficDetailActivity::class.java).apply {
+                            putExtra(com.example.ceylonqueuebuspulse.ui.TrafficDetailActivity.EXTRA_ROUTE_ID, routeId)
+                            putExtra(com.example.ceylonqueuebuspulse.ui.TrafficDetailActivity.EXTRA_WINDOW_START_MS, windowStartMs)
+                            putExtra(com.example.ceylonqueuebuspulse.ui.TrafficDetailActivity.EXTRA_SEVERITY_AVG, severityAvg)
+                            putExtra(com.example.ceylonqueuebuspulse.ui.TrafficDetailActivity.EXTRA_SAMPLE_COUNT, sampleCount)
+                        }
+                    )
                 }
             }
         }
