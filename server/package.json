@@ -10,7 +10,7 @@
     "start": "node dist/index.js",
     "dev:redis": "docker run --rm -p 6379:6379 --name cqbp-redis redis:7-alpine",
     "migrate:refresh-tokens": "ts-node src/scripts/migrate_refresh_tokens.ts",
-    "test": "jest --runInBand --detectOpenHandles",
+    "test": "jest --runInBand --detectOpenHandles --testPathPattern src",
     "aggregate:once": "ts-node src/scripts/aggregator.ts --once",
     "aggregate:cron": "ts-node src/scripts/aggregator.ts"
   },
