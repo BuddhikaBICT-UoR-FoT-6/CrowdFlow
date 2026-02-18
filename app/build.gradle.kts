@@ -169,4 +169,7 @@ dependencies {
     // PullRefresh APIs are provided by androidx.compose.material:material (aligned via the Compose BOM).
     implementation("androidx.compose.material:material")
 
+    // Settings storage
+    implementation(libs.androidx.datastore.preferences)
+
 }
