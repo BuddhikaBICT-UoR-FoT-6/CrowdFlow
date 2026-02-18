@@ -11,6 +11,7 @@ import com.example.ceylonqueuebuspulse.data.network.TomTomSearchApi
 import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
 import com.example.ceylonqueuebuspulse.settings.SettingsRepository
+import com.example.ceylonqueuebuspulse.settings.SettingsViewModel
 import com.example.ceylonqueuebuspulse.ui.TrafficViewModel
 import com.example.ceylonqueuebuspulse.ui.auth.AuthViewModel
 import com.example.ceylonqueuebuspulse.traffic.MapComposeViewModel
@@ -105,11 +106,12 @@ val appModule = module {
     viewModel { AuthViewModel(authRepository = get()) }
     viewModel { LocationTrafficViewModel(debugApi = get(), aggregationRepo = get()) }
     viewModel { MapComposeViewModel(tomTomSearchApi = get(), locVm = get()) }
+    viewModel { SettingsViewModel(repo = get()) }
 
     // --- WorkManager workers ---
     worker { AggregationPlannerWorker(appContext = get(), params = get()) }
     worker { MongoAggregationSyncWorker(appContext = get(), params = get()) }
 
     // --- Settings (DataStore) ---
-    single { SettingsRepository(androidContext()) }
+    single { SettingsRepository(context = androidContext()) }
 }
