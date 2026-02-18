@@ -1,8 +1,11 @@
+// Load environment variables as early as possible
+require('dotenv').config();
+
 import express = require('express');
 import type { Request, Response } from 'express';
 import cors = require('cors');
-import dotenv = require('dotenv');
 import mongoose from 'mongoose';
+import axios from 'axios';
 import bcrypt = require('bcrypt');
 import { z } from 'zod';
 import { requireAuth, signAccessToken, type AuthedRequest, signRefreshToken, verifyRefreshToken, verifyTokenMiddleware, rotateRefreshToken, revokeRefreshTokenByJti, revokeAllTokensForUser } from './auth';
@@ -12,10 +15,10 @@ import { requireRole } from './roles';
 import { loginLimiter, registerLimiter, trafficSamplesLimiter, getRecentRateLimitBlocks, listBlockedKeys, removeBlockedKey } from './middleware/rateLimiter';
 import { duplicateSubmissionProtection } from './middleware/duplicateDetection';
 import tomtomDebugRoute from './routes/tomtomDebugRoute';
+import trafficRoute from './routes/trafficRoute';
+import searchRoute from './routes/searchRoute';
 import { startTomTomScheduler } from './tasks/tomtomScheduler';
 
-
-dotenv.config();
 
 const app = express();
 app.use(cors());
@@ -32,9 +35,15 @@ if(!process.env.REDIS_URL){
 }
 
 const MONGODB_URI = process.env.MONGODB_URI;
+const TOMTOM_API_KEY = process.env.TOMTOM_API_KEY;
+
 if (!MONGODB_URI) {
   console.error('Missing MONGODB_URI in environment');
   process.exit(1);
+}
+
+if(!TOMTOM_API_KEY){
+    console.warn('WARNING: TOMTOM_API_KEY is NOT configured — TomTom debug route will not work. Configure TOMTOM_API_KEY for production.')
 }
 
 // Mongo connection
@@ -58,6 +67,8 @@ const SampleSchema = new mongoose.Schema(
     severity: { type: Number, required: true, min: 0, max: 5 },
     reportedAtMs: { type: Number, required: true, index: true },
     userIdHash: { type: String },
+    lat: { type: Number },
+    lon: { type: Number },
     createdAt: { type: Date, required: true, default: () => new Date(), index: true },
   },
   { timestamps: false, versionKey: false }
@@ -97,6 +108,8 @@ const submitSampleSchema = z.object({
   severity: z.number().min(0).max(5),
   reportedAtMs: z.number().int().positive(),
   userIdHash: z.string().optional(),
+  lat: z.number().optional(),
+  lon: z.number().optional(),
 });
 
 const aggregateWindowSchema = z.object({
@@ -129,12 +142,41 @@ const updateUserRoleSchema = z.object({
   role: z.enum(['superadmin', 'admin', 'user']),
 });
 
+const providerQuery = z.object({
+    lat: z.string().transform(Number),
+    lon: z.string().transform(Number),
+});
+
 function computeStats(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
   const len = sorted.length;
   const avg = sorted.reduce((s, v) => s + v, 0) / len;
   const p = (q: number) => sorted[Math.floor(q * (len - 1))];
   return { avg, p50: p(0.5), p90: p(0.9), count: len };
+}
+
+// for map function
+function mapSpeedToSeverity(speedKmph: number | null){
+    // lower speed = higher severity
+    if(speedKmph === null || speedKmph == undefined) return 3;
+    if(speedKmph < 10) return 5;
+    if(speedKmph < 20) return 4;
+    if(speedKmph < 30) return 3;
+    if(speedKmph < 40) return 2;
+    if(speedKmph < 50) return 1;
+    return 0;
+}
+
+async function fetchTomTomFlow(lat: number, lon: number){
+    // TomTom flow segment data endpoint
+    const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json`;
+    const params = {
+        point: `${lat},${lon}`,
+        unit: 'KMPH',
+        key: TOMTOM_API_KEY
+    };
+    const res = await axios.get(url, {params, timeout: 5000});
+    return res.data;
 }
 
 // Export helper for aggregator scripts
@@ -147,6 +189,10 @@ app.get('/health', (_req: Request, res: Response) => {
 
 // Mount TomTom debug route (provides GET /api/v1/debug/provider/point)
 app.use(tomtomDebugRoute);
+// Mount traffic routes (GET /api/v1/traffic and POST /api/v1/traffic/bbox)
+app.use(trafficRoute);
+// Mount search routes (GET /api/v1/search and GET /api/v1/reverse)
+app.use(searchRoute);
 
 // --- Auth routes ---
 app.post('/api/v1/auth/register', registerLimiter, async (req: Request, res: Response) => {
@@ -455,6 +501,21 @@ app.get('/api/v1/aggregates', requireAuth, async (req: AuthedRequest, res: Respo
 });
 
 
+// Public reporting endpoint (convenience wrapper for UI clients).
+// Validates payload and inserts into samples collection. This mirrors /api/v1/samples behavior
+// but can be used as a client-friendly endpoint (without requiring auth token).
+app.post('/api/v1/report', async (req: Request, res: Response) => {
+  try {
+    const body = req.body;
+    const p = submitSampleSchema.parse(body);
+    await Sample.create(p);
+    return res.status(201).json({ ok: true, inserted: 1 });
+  } catch (e: any) {
+    console.error('/api/v1/report error', e?.message || e);
+    return res.status(400).json({ ok: false, error: e?.message || 'Bad Request' });
+  }
+});
+
 // Export app for testing and reuse
 export { app };
 
@@ -510,6 +571,37 @@ app.post(
     }
   },
 );
+
+app.get('/api/v1/debug/provider/point', async (req, res) => {
+    try{
+        const q = providerQuery.parse(req.query);
+        if(!TOMTOM_API_KEY){
+            return res.status(400).json({ok: false, error: 'TOMTOM_API_KEY not configured'});
+        }
+
+        const raw = await fetchTomTomFlow(q.lat, q.lon);
+        // Try to extract currentSpeed from response in typical TomTom shape.
+        let speed: number | null = null;
+
+        try{
+            // typical path: flowSegmentData -> RWS -> RW -> FIS -> FI -> CF -> SP (varies). Use safe navigation.
+            if(raw && raw.flowSegmentData && raw.flowSegmentData.currentSpeed != null){
+                speed = Number(raw.flowSegmentData.currentSpeed);
+            } else if(raw && raw.flowSegmentData && raw.flowSegmentData.freeFlowSpeed) {
+                // fallback
+                speed = Number(raw.flowSegmentData.freeFlowSpeed);
+            }
+        } catch(e) { speed = null; }
+
+        const severity = mapSpeedToSeverity(speed);
+        return res.json({ ok: true, provider: raw, mapped: { speedKmph: speed, severity }});
+
+    } catch(e: any){
+        console.error('/debug/provider/point error', e?.message || e);
+        return res.status(400).json({ok: false, error: e?.message || 'Bad Request'});
+    }
+});
+
 
 // Only start TomTom scheduler when explicitly enabled in env
 if (process.env.ENABLE_TOMTOM_SCHEDULER === 'true') {
