@@ -12,7 +12,9 @@
     "migrate:refresh-tokens": "ts-node src/scripts/migrate_refresh_tokens.ts",
     "test": "jest --runInBand --detectOpenHandles --testPathPattern src",
     "aggregate:once": "ts-node src/scripts/aggregator.ts --once",
-    "aggregate:cron": "ts-node src/scripts/aggregator.ts"
+    "aggregate:cron": "ts-node src/scripts/aggregator.ts",
+    "geojson:validate": "ts-node src/scripts/validate_geojson.ts --",
+    "geojson:ors": "ts-node src/scripts/ors_generate_route_geojson.ts --"
   },
   "dependencies": {
     "axios": "^1.5.0",
