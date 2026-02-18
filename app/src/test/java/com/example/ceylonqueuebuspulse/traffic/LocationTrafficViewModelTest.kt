@@ -2,6 +2,7 @@ package com.example.ceylonqueuebuspulse.traffic
 
 import com.example.ceylonqueuebuspulse.data.network.DebugApi
 import com.example.ceylonqueuebuspulse.data.network.model.ApiResponse
+import com.example.ceylonqueuebuspulse.data.repository.AppResult
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -111,7 +112,7 @@ class LocationTrafficViewModelTest {
                 any(),
                 any()
             )
-        } returns ApiResponse(ok = true, data = emptyMap())
+        } returns AppResult.Ok(Unit)
 
         val vm = LocationTrafficViewModel(debugApi, repo)
 
