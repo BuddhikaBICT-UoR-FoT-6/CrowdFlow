@@ -1,7 +1,6 @@
 package com.example.ceylonqueuebuspulse.settings
 
 import android.content.Context
-import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -33,10 +32,10 @@ class SettingsRepository(private val context: Context) {
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
         val preferred =
-            (prefs[Keys.preferredRoutesSet]?.sanitizeRouteSet() ?: emptySet())
+            (prefs[Keys.preferredRoutesSet].orEmpty().sanitizeRouteSet())
                 .ifEmpty { prefs.csvToSet(Keys.preferredRoutesCsvLegacy) }
         val watched =
-            (prefs[Keys.watchedRoutesSet]?.sanitizeRouteSet() ?: emptySet())
+            (prefs[Keys.watchedRoutesSet].orEmpty().sanitizeRouteSet())
                 .ifEmpty { prefs.csvToSet(Keys.watchedRoutesCsvLegacy) }
 
         AppSettings(
@@ -83,12 +82,11 @@ class SettingsRepository(private val context: Context) {
      */
     fun lastNotifiedRouteWindows(): Flow<Map<String, Long>> =
         context.settingsDataStore.data.map { prefs ->
-            // Read new per-route keys
-            val fromPerRoute = prefs.asMap().mapNotNull { (key, value) ->
-                val keyName = (key as? Preferences.Key<*>)?.name ?: return@mapNotNull null
+            val fromPerRoute = prefs.asMap().entries.mapNotNull { entry ->
+                val keyName = entry.key.name
                 if (!keyName.startsWith(LAST_NOTIFIED_PREFIX)) return@mapNotNull null
                 val routeId = keyName.removePrefix(LAST_NOTIFIED_PREFIX)
-                val window = value as? Long ?: return@mapNotNull null
+                val window = entry.value as? Long ?: return@mapNotNull null
                 routeId to window
             }.toMap()
 
@@ -124,7 +122,9 @@ class SettingsRepository(private val context: Context) {
             .toMap()
     }
 
-    private fun Preferences.csvToSet(key: Preferences.Key<String>): Set<String> {
+    private fun androidx.datastore.preferences.core.Preferences.csvToSet(
+        key: androidx.datastore.preferences.core.Preferences.Key<String>
+    ): Set<String> {
         val raw = this[key].orEmpty()
         return raw.split(',')
             .mapNotNull { it.trim().takeIf(String::isNotEmpty) }
