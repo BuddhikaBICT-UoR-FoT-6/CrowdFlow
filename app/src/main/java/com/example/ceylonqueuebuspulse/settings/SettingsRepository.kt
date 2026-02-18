@@ -133,6 +133,8 @@ class SettingsRepository(private val context: Context) {
             .sanitizeRouteSet()
     }
 
+    // Keep only ONE extension to avoid JVM signature clashes.
+    // Use nullable receiver so callers can pass prefs[key] directly.
     private fun Set<String>?.sanitizeRouteSet(): Set<String> =
         this.orEmpty()
             .asSequence()
