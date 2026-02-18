@@ -27,6 +27,22 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // TomTom SDK public repository (optional credentials supported)
+        maven {
+            url = uri("https://tomtom.jfrog.io/artifactory/tt-public-releases")
+            // Optional credentials: set in user Gradle properties (e.g. C:\Users\<you>\.gradle\gradle.properties)
+            // Properties: TOMTOM_REPO_USER and TOMTOM_REPO_PASSWORD
+            val tomtomUser: String? = providers.gradleProperty("TOMTOM_REPO_USER").orNull
+                ?: System.getenv("TOMTOM_REPO_USER")
+            val tomtomPassword: String? = providers.gradleProperty("TOMTOM_REPO_PASSWORD").orNull
+                ?: System.getenv("TOMTOM_REPO_PASSWORD")
+            if (!tomtomUser.isNullOrBlank() && !tomtomPassword.isNullOrBlank()) {
+                credentials {
+                    username = tomtomUser
+                    password = tomtomPassword
+                }
+            }
+        }
     }
 }
 

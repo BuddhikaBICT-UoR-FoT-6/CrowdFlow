@@ -6,19 +6,28 @@ import com.example.ceylonqueuebuspulse.data.auth.TokenStore
 import com.example.ceylonqueuebuspulse.data.local.AppDatabase
 import com.example.ceylonqueuebuspulse.data.network.RetrofitProvider
 import com.example.ceylonqueuebuspulse.data.network.model.MongoApi
+import com.example.ceylonqueuebuspulse.data.network.DebugApi
+import com.example.ceylonqueuebuspulse.data.network.TomTomSearchApi
 import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
 import com.example.ceylonqueuebuspulse.ui.TrafficViewModel
 import com.example.ceylonqueuebuspulse.ui.auth.AuthViewModel
+import com.example.ceylonqueuebuspulse.traffic.MapComposeViewModel
+import com.example.ceylonqueuebuspulse.traffic.LocationTrafficViewModel
 import com.example.ceylonqueuebuspulse.util.ConnectivityMonitor
 import com.example.ceylonqueuebuspulse.util.RetryPolicy
 import com.example.ceylonqueuebuspulse.work.AggregationPlannerWorker
 import com.example.ceylonqueuebuspulse.work.MongoAggregationSyncWorker
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.androidx.workmanager.dsl.worker
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
+import retrofit2.Retrofit
+import retrofit2.converter.moshi.MoshiConverterFactory
+import java.util.concurrent.TimeUnit
 
 /**
  * Central Koin module definitions with error handling and retry logic support.
@@ -35,6 +44,28 @@ val appModule = module {
     // Main API uses tokens + auto-refresh
     single(named("mongo")) { RetrofitProvider.mongoRetrofit(tokenStore = get(), authRepository = get()) }
     single<MongoApi> { get<retrofit2.Retrofit>(named("mongo")).create(MongoApi::class.java) }
+
+    // Debug / helper API (uses same base URL)
+    single<DebugApi> { get<retrofit2.Retrofit>(named("mongo")).create(DebugApi::class.java) }
+
+    // TomTom Retrofit instance (uses TomTom's base url)
+    single(named("tomtom")) {
+        val logging = HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
+        val client = OkHttpClient.Builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .writeTimeout(20, TimeUnit.SECONDS)
+            .addInterceptor(logging)
+            .build()
+
+        Retrofit.Builder()
+            .baseUrl("https://api.tomtom.com/")
+            .client(client)
+            .addConverterFactory(MoshiConverterFactory.create())
+            .build()
+    }
+
+    single<TomTomSearchApi> { get<Retrofit>(named("tomtom")).create(TomTomSearchApi::class.java) }
 
     single { ConnectivityMonitor(androidContext()) }
     single { RetryPolicy.DEFAULT }
@@ -71,6 +102,8 @@ val appModule = module {
     // --- ViewModels ---
     viewModel { TrafficViewModel(repository = get(), aggregationRepository = get()) }
     viewModel { AuthViewModel(authRepository = get()) }
+    viewModel { LocationTrafficViewModel(debugApi = get(), aggregationRepo = get()) }
+    viewModel { MapComposeViewModel(tomTomSearchApi = get(), locVm = get()) }
 
     // --- WorkManager workers ---
     worker { AggregationPlannerWorker(appContext = get(), params = get()) }
