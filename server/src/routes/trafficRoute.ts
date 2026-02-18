@@ -1,5 +1,6 @@
 import * as express from 'express';
 import { fetchPointFlow, fetchTomTomForBbox, ProviderPointData } from '../integrations/tomtom';
+import { getAllRoutesSamplePoints } from '../models/routes';
 const router = express.Router();
 
 // GET /api/v1/traffic?lat=&lon=
@@ -25,6 +26,32 @@ router.post('/api/v1/traffic/bbox', async (req, res) => {
     return res.json({ ok: true, data });
   } catch (e: any) {
     console.error('/api/v1/traffic/bbox error', e?.message || e);
+    return res.status(500).json({ ok: false, error: e?.message || 'Failed' });
+  }
+});
+
+// GET /api/v1/routes/:routeId/points?maxPoints=12&windowStartMs=...
+router.get('/api/v1/routes/:routeId/points', async (req, res) => {
+  try {
+    const routeId = String(req.params.routeId || '').trim();
+    if (!routeId) return res.status(400).json({ ok: false, error: 'routeId required' });
+
+    const maxPoints = Number(req.query.maxPoints || 12);
+    const windowStartMs = req.query.windowStartMs != null ? Number(req.query.windowStartMs) : undefined;
+
+    if (!Number.isFinite(maxPoints) || maxPoints <= 0) {
+      return res.status(400).json({ ok: false, error: 'maxPoints must be a positive number' });
+    }
+
+    const all = await getAllRoutesSamplePoints(
+      Number.isFinite(windowStartMs as any) ? (windowStartMs as any as number) : undefined,
+      Math.max(1, Math.min(50, maxPoints))
+    );
+
+    const found = all.find(r => r.routeId === routeId);
+    return res.json({ ok: true, data: { routeId, points: found?.points || [] } });
+  } catch (e: any) {
+    console.error('/api/v1/routes/:routeId/points error', e?.message || e);
     return res.status(500).json({ ok: false, error: e?.message || 'Failed' });
   }
 });
