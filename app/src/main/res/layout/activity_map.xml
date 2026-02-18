@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Replace with TomTom MapView when integrating the SDK -->
+    <TextView
+        android:id="@+id/tapHint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Map placeholder - tap to select a location"
+        android:layout_gravity="center" />
+
+    <Button
+        android:id="@+id/submitBtn"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Submit severity 3"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_margin="24dp" />
+
+
+</FrameLayout>

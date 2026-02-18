@@ -24,6 +24,9 @@
         android:theme="@style/Theme.CeylonQueueBusPulse"
         tools:targetApi="31">
 
+        <!-- TomTom SDK key (set TOMTOM_API_KEY in gradle.properties or local.properties to populate this) -->
+        <meta-data android:name="com.tomtom.sdk.key" android:value="${TOMTOM_SDK_KEY}" />
+
         <!-- Disable automatic WorkManager initialization (we use Koin's workManagerFactory) -->
         <provider
             android:name="androidx.startup.InitializationProvider"
@@ -45,6 +48,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Map activity for TomTom map interactions (legacy) -->
+        <activity android:name=".traffic.MapActivity" android:exported="false" />
+
+        <!-- Compose-based Map activity -->
+        <activity android:name=".traffic.MapComposeActivity" android:exported="false" />
+
     </application>
 
 

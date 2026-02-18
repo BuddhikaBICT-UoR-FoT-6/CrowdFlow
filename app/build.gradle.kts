@@ -39,6 +39,13 @@ android {
 
         // Expose backend config to code
         buildConfigField("String", "MONGO_API_BASE_URL", "\"${mongoApiBaseUrl}\"")
+
+        // TomTom API key from Gradle property (set in local.properties or gradle.properties)
+        val tomtomApiKey: String = providers.gradleProperty("TOMTOM_API_KEY").orNull ?: ""
+        buildConfigField("String", "TOMTOM_API_KEY", "\"${tomtomApiKey}\"")
+
+        // Pass TomTom SDK key to manifest placeholder (for SDK initialization)
+        manifestPlaceholders["TOMTOM_SDK_KEY"] = tomtomApiKey
     }
 
     buildFeatures {
@@ -107,11 +114,6 @@ dependencies {
     implementation(libs.koin.androidx.compose)
     implementation(libs.koin.androidx.workmanager)
 
-    // Removed Firebase dependencies (Firestore/Auth/Functions)
-    // implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
-    // implementation("com.google.firebase:firebase-firestore-ktx")
-    // implementation("com.google.firebase:firebase-auth-ktx")
-    // implementation("com.google.firebase:firebase-functions-ktx")
 
     // Material icons (using version catalog would be ideal; keeping explicit for now)
     implementation("androidx.compose.material:material-icons-core")
@@ -122,6 +124,8 @@ dependencies {
 
     // Unit testing
     testImplementation(libs.junit)
+    testImplementation("io.mockk:mockk:1.13.5")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
 
     // (Optional) Kotlin test helpers that bridge to JUnit4.
     // Keep Kotlin version aligned via the Kotlin plugin (no hardcoded version here).
@@ -132,4 +136,33 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
 
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
+    // Compose runtime-livedata for observeAsState
+    implementation("androidx.compose.runtime:runtime-livedata:1.9.0")
+
+    // For map implementation
+    // Pin to stable core-ktx that resolves from Google/Maven Central in most environments.
+    implementation("androidx.core:core-ktx:1.10.1")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("com.google.android.material:material:1.9.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2")
+    implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.6.2")
+
+    // Networking
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+
+    // TomTom Maps SDK - include only when credentials are present or property enabled.
+    val tomtomUser: String? = providers.gradleProperty("TOMTOM_REPO_USER").orNull ?: System.getenv("TOMTOM_REPO_USER")
+    val tomtomPassword: String? = providers.gradleProperty("TOMTOM_REPO_PASSWORD").orNull ?: System.getenv("TOMTOM_REPO_PASSWORD")
+    val tomtomEnabledProp = providers.gradleProperty("TOMTOM_SDK_ENABLED").orNull
+    val hasTomtomCreds = !tomtomUser.isNullOrBlank() && !tomtomPassword.isNullOrBlank()
+    if (hasTomtomCreds || tomtomEnabledProp == "true") {
+        implementation("com.tomtom.online:sdk-maps:5.7.0")
+    } else {
+        // No TomTom credentials => rely on local stubs under com.tomtom.* for compilation.
+        // Keep the stubs in the source tree (com.tomtom.*) so builds succeed without the SDK.
+    }
+
 }
