@@ -2,6 +2,7 @@ package com.example.ceylonqueuebuspulse.di
 
 import com.example.ceylonqueuebuspulse.data.auth.AuthApi
 import com.example.ceylonqueuebuspulse.data.auth.AuthRepository
+import com.example.ceylonqueuebuspulse.data.auth.PendingDeepLinkStore
 import com.example.ceylonqueuebuspulse.data.auth.TokenStore
 import com.example.ceylonqueuebuspulse.data.local.AppDatabase
 import com.example.ceylonqueuebuspulse.data.network.RetrofitProvider
@@ -38,6 +39,9 @@ import java.util.concurrent.TimeUnit
 val appModule = module {
     // --- Networking & Connectivity ---
     single { TokenStore(androidContext()) }
+
+    // Store deep links that need a login first.
+    single { PendingDeepLinkStore(androidContext()) }
 
     // Auth API must work even when we don't yet have a token.
     single(named("auth")) { RetrofitProvider.mongoRetrofit() }
