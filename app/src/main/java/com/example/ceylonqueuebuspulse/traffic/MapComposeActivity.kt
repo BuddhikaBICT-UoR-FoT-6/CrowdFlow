@@ -3,6 +3,7 @@ package com.example.ceylonqueuebuspulse.traffic
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.Bundle
@@ -29,20 +30,34 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.example.ceylonqueuebuspulse.MainActivity
 import com.example.ceylonqueuebuspulse.R
+import com.example.ceylonqueuebuspulse.data.auth.PendingDeepLinkStore
+import com.example.ceylonqueuebuspulse.ui.auth.AuthViewModel
+import com.example.ceylonqueuebuspulse.util.HeadingProvider
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import org.json.JSONArray
 import org.json.JSONObject
+import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
+import androidx.lifecycle.lifecycleScope
 
 class MapComposeActivity : ComponentActivity() {
     private val vm: MapComposeViewModel by viewModel()
     private val locVm: LocationTrafficViewModel by viewModel()
+
+    // Auth for logout
+    private val authVm: AuthViewModel by viewModel()
+    private val pendingDeepLinkStore: PendingDeepLinkStore by inject()
 
     private lateinit var fusedClient: FusedLocationProviderClient
     private var locationCallback: LocationCallback? = null
@@ -50,9 +65,23 @@ class MapComposeActivity : ComponentActivity() {
     private val locationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { /* handled in compose via state */ }
 
+    private var headingJob: Job? = null
+    private var latestHeadingDeg: Float = 0f
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
+
+        // Start heading updates (best-effort; may be unavailable on some devices).
+        try {
+            val headingProvider = HeadingProvider(applicationContext)
+            headingJob = headingProvider.headings()
+                .distinctUntilChanged()
+                .onEach { latestHeadingDeg = it }
+                .launchIn(lifecycleScope)
+        } catch (_: Throwable) {
+            // ignore
+        }
 
         val initialRouteId = intent.getStringExtra(EXTRA_ROUTE_ID)?.trim().takeUnless { it.isNullOrEmpty() } ?: "138"
 
@@ -76,6 +105,16 @@ class MapComposeActivity : ComponentActivity() {
                 },
                 onPlaceSelected = { place ->
                     vm.selectPlace(place)
+                },
+                onLogout = {
+                    // Clear any pending deep links to avoid stale navigation
+                    pendingDeepLinkStore.clear()
+
+                    // Clear the session and navigate to the login/register screen
+                    authVm.logout()
+                    startActivity(Intent(this, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                    })
                 }
             )
         }
@@ -101,7 +140,8 @@ class MapComposeActivity : ComponentActivity() {
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val loc = result.lastLocation ?: return
-                webView.evaluateJavascript("setUserLocation(${loc.latitude}, ${loc.longitude}, 0)", null)
+                val heading = latestHeadingDeg
+                webView.evaluateJavascript("setUserLocation(${loc.latitude}, ${loc.longitude}, ${heading})", null)
             }
         }
 
@@ -117,6 +157,12 @@ class MapComposeActivity : ComponentActivity() {
         super.onPause()
         stopLocationUpdates()
     }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        headingJob?.cancel()
+        headingJob = null
+    }
 }
 
 @Composable
@@ -129,6 +175,7 @@ fun MapComposeScreen(
     onStopLocation: () -> Unit,
     onMapClick: (Double, Double) -> Unit,
     onPlaceSelected: (PlaceResult) -> Unit,
+    onLogout: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
     val places by vm.places.collectAsState(initial = emptyList())
@@ -163,6 +210,13 @@ fun MapComposeScreen(
     var selectedRouteId by remember { mutableStateOf(initialRouteId) }
 
     Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(text = stringResource(id = R.string.app_name))
+            OutlinedButton(onClick = onLogout) { Text(stringResource(id = R.string.action_logout)) }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
         // Search
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextField(value = query, onValueChange = { query = it }, modifier = Modifier.weight(1f))
@@ -273,6 +327,7 @@ fun MapComposeScreen(
     // Load route points whenever selected route changes.
     LaunchedEffect(selectedRouteId) {
         locVm.loadRoutePoints(routeId = selectedRouteId, maxPoints = 12)
+        webViewRef?.evaluateJavascript("setRoute('${selectedRouteId}')", null)
     }
 
     // When points change, push them into the map.
@@ -285,13 +340,19 @@ fun MapComposeScreen(
             val obj = JSONObject()
             obj.put("lat", p.lat)
             obj.put("lon", p.lon)
-            obj.put("label", "Route point")
+            obj.put("label", "Route ${selectedRouteId}")
             obj.put("severity", p.severity ?: 2.0)
             arr.put(obj)
         }
 
-        val json = arr.toString().replace("\\", "\\\\").replace("'", "\\'")
-        wv.evaluateJavascript("setTrafficPoints('${json}')", null)
+        // Avoid quoting/escaping issues by passing JSON as a JS string literal via JSON.stringify
+        val json = arr.toString()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "")
+            .replace("\r", "")
+
+        wv.evaluateJavascript("setTrafficPoints(\"$json\")", null)
     }
 
     DisposableEffect(Unit) {
@@ -311,6 +372,8 @@ private fun setupWebViewForLeaflet(wv: WebView, onMapClick: (Double, Double) -> 
 
     wv.webChromeClient = WebChromeClient()
     wv.webViewClient = WebViewClient()
+
+    @Suppress("unused")
     wv.addJavascriptInterface(object {
         @JavascriptInterface
         fun onMapTap(lat: Double, lon: Double) {
