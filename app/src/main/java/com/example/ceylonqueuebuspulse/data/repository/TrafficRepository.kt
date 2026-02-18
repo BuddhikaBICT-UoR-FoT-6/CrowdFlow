@@ -34,7 +34,7 @@ import com.example.ceylonqueuebuspulse.data.local.TrafficReportEntity
  * Responsibilities:
  * - Read: Observe Room (DAO) as a Flow of entities and map them to domain models.
  * - Write: Seed historical reports and append user-submitted reports into Room.
- * - Remote: Sync remote -> Room and push user updates (best-effort).
+ * - Remote: Push user updates (best-effort).
  */
 class TrafficRepository(
     // DAO dependency; provided by the Room database.
@@ -48,62 +48,79 @@ class TrafficRepository(
     private val sampleBatcher: com.example.ceylonqueuebuspulse.data.network.SampleBatcher? = null
 ) {
 
+    // In-memory cache of last emitted list (UI can render instantly while Room catches up)
+    @Volatile
+    private var lastReportsCache: List<TrafficReport> = emptyList()
+
     // Stream of domain models consumed by ViewModel/UI. Mapping preserves reactivity from Room.
     val reports: Flow<List<TrafficReport>> =
-        dao.observeReports().map { entities -> entities.map { it.toDomain() } }
+        dao.observeReports().map { entities ->
+            val mapped = entities.map { it.toDomain() }
+            lastReportsCache = mapped
+            mapped
+        }
+
+    /** Get the latest cached reports (bypassing Room). */
+    fun getCachedReports(): List<TrafficReport> = lastReportsCache
 
     /**
      * Replace all existing reports with the provided historical samples.
      * Typically used during bootstrap or periodic data refresh.
      */
-    suspend fun seedHistoricalData(sample: List<TrafficReport>) = withContext(io) {
-        val entities = sample.map { it.toEntity() }
-        dao.clearAll()
-        dao.insertReports(entities)
+    suspend fun seedHistoricalData(sample: List<TrafficReport>): AppResult<Unit> = withContext(io) {
+        try {
+            val entities = sample.map { it.toEntity() }
+            dao.clearAll()
+            dao.insertReports(entities)
+            lastReportsCache = sample
+            AppResult.Ok(Unit)
+        } catch (t: Throwable) {
+            AppResult.Err(RepositoryErrorMapper.toAppError(t))
+        }
     }
 
     /**
      * Convert a user location update into a traffic report and persist it locally.
-     * Then best-effort push the update to the backend (fire-and-forget).
+     * Then best-effort push the update to the backend.
      */
-    suspend fun submitUserUpdate(update: UserLocationUpdate) = withContext(io) {
-        val nowMs = System.currentTimeMillis()
-        val routeId = update.routeId ?: "unknown"
+    suspend fun submitUserUpdate(update: UserLocationUpdate): AppResult<Unit> = withContext(io) {
+        try {
+            val nowMs = System.currentTimeMillis()
+            val routeId = update.routeId ?: "unknown"
 
-        val report = TrafficReport(
-            id = "user-${update.id}",
-            routeId = routeId,
-            severity = 3, // TODO: derive from heuristics
-            segment = listOf(LatLng(update.lat, update.lng)),
-            timestamp = nowMs,
-            source = TrafficSource.USER
-        )
-        // Persist locally; UI will react via Room Flow
-        dao.insertReport(report.toEntity())
+            val report = TrafficReport(
+                id = "user-${update.id}",
+                routeId = routeId,
+                severity = 3, // TODO: derive from heuristics / provider
+                segment = listOf(LatLng(update.lat, update.lng)),
+                timestamp = nowMs,
+                source = TrafficSource.USER
+            )
+            // Persist locally; UI will react via Room Flow
+            dao.insertReport(report.toEntity())
 
-        // Compute window start inline (avoid unused-parameter inspection)
-        val windowSizeMs = 15 * 60 * 1000L
-        val windowStartMs = (nowMs / windowSizeMs) * windowSizeMs
+            // Compute window start inline (avoid unused-parameter inspection)
+            val windowSizeMs = 15 * 60 * 1000L
+            val windowStartMs = (nowMs / windowSizeMs) * windowSizeMs
 
-        val sample = SubmitSampleRequest(
-            routeId = routeId,
-            windowStartMs = windowStartMs,
-            segmentId = "_all",
-            severity = report.severity.toDouble(),
-            reportedAtMs = nowMs,
-            userIdHash = update.userId
-        )
+            val sample = SubmitSampleRequest(
+                routeId = routeId,
+                windowStartMs = windowStartMs,
+                segmentId = "_all",
+                severity = report.severity.toDouble(),
+                reportedAtMs = nowMs,
+                userIdHash = update.userId
+            )
 
-        // Submit sample via batcher if available, otherwise fall back to direct API call
-        if (sampleBatcher != null) {
-            sampleBatcher.submit(sample)
-        } else {
+            // Fire-and-forget: don't fail UI just because push fails; still return OK.
             runCatching {
-                mongoApi.submitSample(sample)
+                if (sampleBatcher != null) sampleBatcher.submit(sample) else mongoApi.submitSample(sample)
             }
-        }
 
-        // Server-side aggregation will run on backend; no client aggregation here.
+            AppResult.Ok(Unit)
+        } catch (t: Throwable) {
+            AppResult.Err(RepositoryErrorMapper.toAppError(t))
+        }
     }
 
     // --- Mapping helpers: Entity <-> Domain ---
