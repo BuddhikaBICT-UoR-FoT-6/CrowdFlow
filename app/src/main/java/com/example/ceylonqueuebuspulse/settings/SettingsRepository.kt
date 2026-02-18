@@ -1,6 +1,7 @@
 package com.example.ceylonqueuebuspulse.settings
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -32,10 +33,10 @@ class SettingsRepository(private val context: Context) {
 
     val settings: Flow<AppSettings> = context.settingsDataStore.data.map { prefs ->
         val preferred =
-            (prefs[Keys.preferredRoutesSet].orEmpty().sanitizeRouteSet())
+            (prefs[Keys.preferredRoutesSet].sanitizeRouteSet())
                 .ifEmpty { prefs.csvToSet(Keys.preferredRoutesCsvLegacy) }
         val watched =
-            (prefs[Keys.watchedRoutesSet].orEmpty().sanitizeRouteSet())
+            (prefs[Keys.watchedRoutesSet].sanitizeRouteSet())
                 .ifEmpty { prefs.csvToSet(Keys.watchedRoutesCsvLegacy) }
 
         AppSettings(
@@ -122,8 +123,8 @@ class SettingsRepository(private val context: Context) {
             .toMap()
     }
 
-    private fun androidx.datastore.preferences.core.Preferences.csvToSet(
-        key: androidx.datastore.preferences.core.Preferences.Key<String>
+    private fun Preferences.csvToSet(
+        key: Preferences.Key<String>
     ): Set<String> {
         val raw = this[key].orEmpty()
         return raw.split(',')
@@ -132,8 +133,9 @@ class SettingsRepository(private val context: Context) {
             .sanitizeRouteSet()
     }
 
-    private fun Set<String>.sanitizeRouteSet(): Set<String> =
-        this.asSequence()
+    private fun Set<String>?.sanitizeRouteSet(): Set<String> =
+        this.orEmpty()
+            .asSequence()
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .toSet()
