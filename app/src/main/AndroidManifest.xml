@@ -12,6 +12,9 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <!-- Android 13+ notifications permission (safe to declare; runtime requested by UI/worker) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" tools:targetApi="33" />
+
     <application
         android:name=".CeylonQueueBusPulseApp"
         android:allowBackup="true"
@@ -47,7 +50,24 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Deep links: open to a route or report -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ceylonqueue" android:host="route" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ceylonqueue" android:host="report" />
+            </intent-filter>
         </activity>
+
+        <!-- Settings screen -->
+        <activity android:name=".ui.SettingsActivity" android:exported="false" />
 
         <!-- Compose Traffic Detail screen -->
         <activity android:name=".ui.TrafficDetailActivity" android:exported="false" />
