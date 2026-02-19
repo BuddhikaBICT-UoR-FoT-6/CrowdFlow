@@ -30,6 +30,8 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.CeylonQueueBusPulse"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="false"
         tools:targetApi="31">
 
         <!-- TomTom SDK key (set TOMTOM_API_KEY in gradle.properties or local.properties to populate this) -->
@@ -74,10 +76,8 @@
         <!-- Compose-based Map activity -->
         <activity
             android:name=".traffic.MapComposeActivity"
-            android:exported="true">
-
-            <!-- Optional dev launcher (disabled by default). If you want the Map to open directly,
-                 move the LAUNCHER filter from MainActivity to here. -->
+            android:exported="false">
+            <!-- Map should be opened internally after login. Deep links are handled by MainActivity. -->
         </activity>
 
         <!-- Settings screen -->

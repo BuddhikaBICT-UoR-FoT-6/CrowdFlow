@@ -10,7 +10,9 @@ plugins {
     alias(libs.plugins.ksp)     // Room ONLY
 
     // Firebase configuration processing
-    // alias(libs.plugins.google.services)
+    alias(libs.plugins.google.services)
+    // Crash reporting
+    id("com.google.firebase.crashlytics")
 }
 
 // Fix for: NoSuchMethodError: com.squareup.javapoet.ClassName.canonicalName()
@@ -46,6 +48,27 @@ android {
 
         // Pass TomTom SDK key to manifest placeholder (for SDK initialization)
         manifestPlaceholders["TOMTOM_SDK_KEY"] = tomtomApiKey
+    }
+
+    buildTypes {
+        debug {
+            // Allow HTTP for emulator/local dev only. Release should be HTTPS.
+            buildConfigField("Boolean", "ALLOW_CLEARTEXT", "true")
+            buildConfigField("Boolean", "STRICT_MODE_ENABLED", "true")
+            buildConfigField("Boolean", "LOGGING_ENABLED", "true")
+        }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+
+            buildConfigField("Boolean", "ALLOW_CLEARTEXT", "false")
+            buildConfigField("Boolean", "STRICT_MODE_ENABLED", "false")
+            buildConfigField("Boolean", "LOGGING_ENABLED", "false")
+        }
     }
 
     buildFeatures {
@@ -119,8 +142,13 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // OkHttp logging (useful during auth bring-up)
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    // OkHttp logging (debug use; keep a single version)
+    implementation(libs.okhttp.loggingInterceptor)
+
+    // Firebase (Crashlytics)
+    implementation(platform(libs.firebase.bom))
+    implementation("com.google.firebase:firebase-crashlytics-ktx")
+    implementation("com.google.firebase:firebase-analytics-ktx")
 
     // Unit testing
     testImplementation(libs.junit)
@@ -147,11 +175,6 @@ dependencies {
     implementation("com.google.android.material:material:1.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2")
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.6.2")
-
-    // Networking
-    implementation("com.squareup.retrofit2:retrofit:2.9.0")
-    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
-    implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
     // TomTom Maps SDK - include only when credentials are present or property enabled.
     val tomtomUser: String? = providers.gradleProperty("TOMTOM_REPO_USER").orNull ?: System.getenv("TOMTOM_REPO_USER")
