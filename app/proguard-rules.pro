@@ -22,3 +22,24 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# --- WebView JS bridge ---
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+
+# --- Kotlin metadata (helps with reflection-based libs) ---
+-keepattributes *Annotation*,Signature,EnclosingMethod,InnerClasses
+
+# --- Moshi / Retrofit (typically safe, but keep annotations) ---
+-dontwarn javax.annotation.**
+-dontwarn kotlin.Metadata
+
+# --- Room ---
+-dontwarn androidx.room.paging.**
+
+# --- WorkManager ---
+-dontwarn androidx.work.impl.**
+
+# --- Koin ---
+-dontwarn org.koin.**
