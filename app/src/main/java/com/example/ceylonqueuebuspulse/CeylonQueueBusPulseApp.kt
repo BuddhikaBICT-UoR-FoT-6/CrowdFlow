@@ -17,6 +17,9 @@ class CeylonQueueBusPulseApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // Provide app Context to reflection-based helpers (analytics/logging).
+        AppGlobals.init(this)
+
         if (BuildConfig.STRICT_MODE_ENABLED) {
             StrictModeConfig.enableForDebug()
         }
@@ -29,6 +32,14 @@ class CeylonQueueBusPulseApp : Application() {
                 .invoke(instance, "buildType", BuildConfig.BUILD_TYPE)
             clazz.getMethod("setCustomKey", String::class.java, String::class.java)
                 .invoke(instance, "versionName", BuildConfig.VERSION_NAME)
+        } catch (_: Throwable) {
+            // ignore
+        }
+
+        // Analytics: app start event (no-op if Firebase Analytics isn't configured).
+        try {
+            val logger = com.example.ceylonqueuebuspulse.analytics.FirebaseAnalyticsLogger()
+            logger.logEvent("app_start", mapOf("buildType" to BuildConfig.BUILD_TYPE))
         } catch (_: Throwable) {
             // ignore
         }
