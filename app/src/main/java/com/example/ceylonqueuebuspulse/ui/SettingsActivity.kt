@@ -1,5 +1,6 @@
 package com.example.ceylonqueuebuspulse.ui
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -27,8 +28,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.example.ceylonqueuebuspulse.R
 import com.example.ceylonqueuebuspulse.settings.SettingsViewModel
 import com.example.ceylonqueuebuspulse.settings.ThemeMode
 import com.example.ceylonqueuebuspulse.ui.theme.CeylonQueueBusPulseTheme
@@ -52,6 +56,8 @@ class SettingsActivity : ComponentActivity() {
 private fun SettingsScreen(vm: SettingsViewModel) {
     val settings by vm.settings.collectAsState()
 
+    val context = LocalContext.current
+
     var preferredRoutesText by remember(settings.preferredRoutes) {
         mutableStateOf(settings.preferredRoutes.sorted().joinToString(","))
     }
@@ -68,6 +74,24 @@ private fun SettingsScreen(vm: SettingsViewModel) {
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineSmall)
+
+        // Privacy / permissions
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(id = R.string.title_privacy), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = stringResource(id = R.string.privacy_intro),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        context.startActivity(Intent(context, PrivacyPolicyActivity::class.java))
+                    }) {
+                        Text(stringResource(id = R.string.action_privacy))
+                    }
+                }
+            }
+        }
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
