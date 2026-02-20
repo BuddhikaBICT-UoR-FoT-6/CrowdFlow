@@ -18,6 +18,7 @@
 .cxx
 local.properties
 .env
+.env.*
 
 # Node/Express server
 server/node_modules/
