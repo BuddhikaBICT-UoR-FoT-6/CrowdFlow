@@ -9,6 +9,7 @@ import com.example.ceylonqueuebuspulse.data.network.RetrofitProvider
 import com.example.ceylonqueuebuspulse.data.network.model.MongoApi
 import com.example.ceylonqueuebuspulse.data.network.DebugApi
 import com.example.ceylonqueuebuspulse.data.network.TomTomSearchApi
+import com.example.ceylonqueuebuspulse.data.network.OsmRoutesApi
 import com.example.ceylonqueuebuspulse.data.repository.TrafficRepository
 import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
 import com.example.ceylonqueuebuspulse.settings.SettingsRepository
@@ -17,11 +18,14 @@ import com.example.ceylonqueuebuspulse.ui.TrafficViewModel
 import com.example.ceylonqueuebuspulse.ui.auth.AuthViewModel
 import com.example.ceylonqueuebuspulse.traffic.MapComposeViewModel
 import com.example.ceylonqueuebuspulse.traffic.LocationTrafficViewModel
+import com.example.ceylonqueuebuspulse.traffic.RouteCatalogViewModel
 import com.example.ceylonqueuebuspulse.util.ConnectivityMonitor
 import com.example.ceylonqueuebuspulse.util.RetryPolicy
 import com.example.ceylonqueuebuspulse.work.AggregationPlannerWorker
 import com.example.ceylonqueuebuspulse.work.MongoAggregationSyncWorker
 import com.example.ceylonqueuebuspulse.work.SevereTrafficAlertWorker
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import org.koin.android.ext.koin.androidContext
@@ -58,6 +62,11 @@ val appModule = module {
     // TomTom Retrofit instance (uses TomTom's base url)
     single(named("tomtom")) {
         val logging = HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC }
+
+        val moshi = Moshi.Builder()
+            .add(KotlinJsonAdapterFactory())
+            .build()
+
         val client = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
@@ -68,7 +77,7 @@ val appModule = module {
         Retrofit.Builder()
             .baseUrl("https://api.tomtom.com/")
             .client(client)
-            .addConverterFactory(MoshiConverterFactory.create())
+            .addConverterFactory(MoshiConverterFactory.create(moshi))
             .build()
     }
 
@@ -112,6 +121,7 @@ val appModule = module {
     viewModel { LocationTrafficViewModel(debugApi = get(), aggregationRepo = get()) }
     viewModel { MapComposeViewModel(tomTomSearchApi = get(), locVm = get()) }
     viewModel { SettingsViewModel(repo = get()) }
+    viewModel { RouteCatalogViewModel(osmApi = get()) }
 
     // --- WorkManager workers ---
     worker { AggregationPlannerWorker(appContext = get(), params = get()) }
@@ -120,4 +130,7 @@ val appModule = module {
 
     // --- Settings (DataStore) ---
     single { SettingsRepository(context = androidContext()) }
+
+    // OSM/Overpass routes API (served by our backend)
+    single<OsmRoutesApi> { get<retrofit2.Retrofit>(named("mongo")).create(OsmRoutesApi::class.java) }
 }

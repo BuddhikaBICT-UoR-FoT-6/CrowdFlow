@@ -54,6 +54,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
+import org.koin.androidx.compose.koinViewModel
 import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 
@@ -183,6 +184,9 @@ fun MapComposeScreen(
     onPlaceSelected: (PlaceResult) -> Unit,
     onLogout: () -> Unit,
 ) {
+    val routeVm: RouteCatalogViewModel = koinViewModel()
+    val nearbyRoutes by routeVm.routes.collectAsState(initial = emptyList())
+
     var query by remember { mutableStateOf("") }
     val places by vm.places.collectAsState(initial = emptyList())
     val status by vm.status.collectAsState(initial = null)
@@ -212,7 +216,18 @@ fun MapComposeScreen(
         mutableStateOf(lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true || lm?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true)
     }
 
+    // Replace selectedRouteId init: if initialRouteId not found yet, we'll auto-select first nearby route later.
     var selectedRouteId by remember { mutableStateOf(initialRouteId) }
+
+    // When nearby routes change, auto-select first if current selection isn't in the list.
+    LaunchedEffect(nearbyRoutes) {
+        if (nearbyRoutes.isNotEmpty()) {
+            val contains = nearbyRoutes.any { it.ref == selectedRouteId }
+            if (!contains) {
+                selectedRouteId = nearbyRoutes.first().ref
+            }
+        }
+    }
 
     // Capture user's current location from the WebView updates so the "Center on me" button can fetch traffic.
     var lastUserLatLon by remember { mutableStateOf<Pair<Double, Double>?>(null) }
@@ -282,11 +297,12 @@ fun MapComposeScreen(
             Spacer(Modifier.height(8.dp))
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("138", "174", "177", "120").forEach { routeId ->
+                val chips = if (nearbyRoutes.isNotEmpty()) nearbyRoutes.take(4) else listOf(RouteChip("138"), RouteChip("174"), RouteChip("177"), RouteChip("120"))
+                chips.forEach { chip ->
                     OutlinedButton(
-                        onClick = { selectedRouteId = routeId },
-                        enabled = selectedRouteId != routeId
-                    ) { Text(routeId) }
+                        onClick = { selectedRouteId = chip.ref },
+                        enabled = selectedRouteId != chip.ref
+                    ) { Text(chip.ref) }
                 }
 
                 Spacer(Modifier.weight(1f))
@@ -302,6 +318,9 @@ fun MapComposeScreen(
 
                     val coords = lastUserLatLon
                     if (coords != null) {
+                        // Update nearby route chips for this location
+                        routeVm.loadNearby(coords.first, coords.second)
+
                         webViewRef?.evaluateJavascript("centerOnUser()", null)
                         val p = PlaceResult(label = "My location", lat = coords.first, lon = coords.second)
                         selectedPoint = p
@@ -352,6 +371,9 @@ fun MapComposeScreen(
                             }
                             Button(onClick = {
                                 selectedPoint = p
+                                // Update nearby route chips for this chosen location
+                                routeVm.loadNearby(p.lat, p.lon)
+
                                 webViewRef?.evaluateJavascript("setLocation(${p.lat}, ${p.lon}, ${escapeJsString(p.label)})", null)
                                 onPlaceSelected(p)
                                 showReportDialog = true
