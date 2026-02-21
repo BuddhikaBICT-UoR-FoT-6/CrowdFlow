@@ -65,18 +65,27 @@
       return [[lat, lon], [lat + dLat, lon + dLon]];
     }
 
-    function setUserLocation(lat, lon, headingDeg) {
-      lastUserLatLng = [lat, lon];
-      const color = '#1976D2';
-
-      // Notify Android of the latest coordinates (best-effort).
+    // Throttle bridge callbacks so we don't spam Android and risk recursion.
+    let _lastUserNotifyMs = 0;
+    function notifyAndroidUserLocation(lat, lon) {
+      const now = Date.now();
+      if (now - _lastUserNotifyMs < 1200) return;
+      _lastUserNotifyMs = now;
       try {
         if (window.AndroidBridge && typeof window.AndroidBridge.onUserLocation === 'function') {
           window.AndroidBridge.onUserLocation(Number(lat), Number(lon));
         }
-      } catch (e) {
+      } catch (_) {
         // ignore
       }
+    }
+
+    function _setUserLocation(lat, lon, headingDeg) {
+      lastUserLatLng = [lat, lon];
+      const color = '#1976D2';
+
+      // Notify Android of the latest coordinates (best-effort).
+      notifyAndroidUserLocation(lat, lon);
 
       // Use a circle marker for user location (simple + fast)
       if (userMarker) {
@@ -99,6 +108,10 @@
           userHeadingLine = L.polyline(line, { color: color, weight: 3, opacity: 0.9 }).addTo(map);
         }
       }
+    }
+
+    function setUserLocation(lat, lon, headingDeg) {
+      _setUserLocation(lat, lon, headingDeg);
     }
 
     function centerOnUser() {
@@ -301,12 +314,14 @@
       }
     });
 
-    // Expose wrappers callable from Android WebView.evaluateJavascript
+    // Ensure exported symbols exist early. Android sometimes calls JS quickly after load.
     window.setLocation = function(lat, lon, label) {
       setLocation(lat, lon, label);
+      return true;
     }
     window.setUserLocation = function(lat, lon, headingDeg) {
-      setUserLocation(lat, lon, headingDeg);
+      _setUserLocation(lat, lon, headingDeg);
+      return true;
     }
     window.centerOnUser = function() {
       return centerOnUser();
@@ -317,6 +332,13 @@
     window.setRoute = function(routeId) {
       return setRoute(routeId);
     }
+
+    // Let Android know the page is ready (optional)
+    try {
+      if (window.AndroidBridge && typeof window.AndroidBridge.onPageReady === 'function') {
+        window.AndroidBridge.onPageReady();
+      }
+    } catch (_) {}
   </script>
 </body>
 </html>
