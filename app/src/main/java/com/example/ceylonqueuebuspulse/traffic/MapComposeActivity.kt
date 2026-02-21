@@ -195,6 +195,9 @@ fun MapComposeScreen(
     val context = LocalContext.current
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
+    // Track when the HTML+Leaflet is fully loaded so we don't call JS too early.
+    var isMapReady by remember { mutableStateOf(false) }
+
     val fineGranted = remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -251,6 +254,9 @@ fun MapComposeScreen(
                 webViewRef = wv
                 setupWebViewForLeaflet(
                     wv,
+                    onPageReady = {
+                        isMapReady = true
+                    },
                     onMapClick = { lat, lon ->
                         // Update nearby route chips for this tapped location
                         routeVm.loadNearby(lat, lon)
@@ -465,14 +471,19 @@ fun MapComposeScreen(
     }
 
     // Load route points whenever selected route changes.
-    LaunchedEffect(selectedRouteId) {
+    LaunchedEffect(selectedRouteId, webViewRef, isMapReady) {
         locVm.loadRoutePoints(routeId = selectedRouteId, maxPoints = 12)
-        webViewRef?.evaluateJavascript("setRoute('${selectedRouteId}')", null)
+        val wv = webViewRef
+        if (wv != null && isMapReady) {
+            // Route IDs are strings ("138" etc.). Always quote them for JS.
+            wv.evaluateJavascript("window.setRoute && window.setRoute('${selectedRouteId}')", null)
+        }
     }
 
     // When points change, push them into the map.
-    LaunchedEffect(routePoints, webViewRef) {
+    LaunchedEffect(routePoints, webViewRef, isMapReady) {
         val wv = webViewRef ?: return@LaunchedEffect
+        if (!isMapReady) return@LaunchedEffect
         if (routePoints.isEmpty()) return@LaunchedEffect
 
         val arr = JSONArray()
@@ -492,7 +503,15 @@ fun MapComposeScreen(
             .replace("\n", "")
             .replace("\r", "")
 
-        wv.evaluateJavascript("setTrafficPoints(\"$json\")", null)
+        wv.evaluateJavascript("window.setTrafficPoints && window.setTrafficPoints(\"$json\")", null)
+    }
+
+    // When map becomes ready, push the latest route/points (handles cold start reliably).
+    LaunchedEffect(isMapReady) {
+        if (!isMapReady) return@LaunchedEffect
+        val wv = webViewRef ?: return@LaunchedEffect
+        // Ensure current route gets drawn even if routePoints hasn't emitted yet.
+        wv.evaluateJavascript("window.setRoute && window.setRoute('${selectedRouteId}')", null)
     }
 
     DisposableEffect(Unit) {
@@ -503,6 +522,7 @@ fun MapComposeScreen(
 @SuppressLint("SetJavaScriptEnabled")
 private fun setupWebViewForLeaflet(
     wv: WebView,
+    onPageReady: () -> Unit,
     onMapClick: (Double, Double) -> Unit,
     onUserLocation: (Double, Double) -> Unit,
     onError: (String) -> Unit
@@ -512,9 +532,14 @@ private fun setupWebViewForLeaflet(
     settings.domStorageEnabled = true
     settings.loadWithOverviewMode = true
     settings.useWideViewPort = true
+    settings.cacheMode = WebSettings.LOAD_NO_CACHE
 
     // Helpful for debugging blank maps caused by blocked CDN assets.
     settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+
+    // Allow asset:// and file:// fetches (GeoJSON route assets, etc.)
+    settings.allowFileAccess = true
+    settings.allowContentAccess = true
 
     wv.webChromeClient = object : WebChromeClient() {
         override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
@@ -527,6 +552,12 @@ private fun setupWebViewForLeaflet(
     }
 
     wv.webViewClient = object : WebViewClient() {
+        override fun onPageFinished(view: WebView?, url: String?) {
+            super.onPageFinished(view, url)
+            // The HTML is loaded; Leaflet script has run and window.* functions should exist now.
+            onPageReady()
+        }
+
         override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
             val msg = "WebView load error url=${request?.url} error=${error?.description}"
             Log.e("LeafletWebView", msg)
