@@ -231,6 +231,7 @@ fun MapComposeScreen(
 
     // Capture user's current location from the WebView updates so the "Center on me" button can fetch traffic.
     var lastUserLatLon by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var didLoadNearbyForUserLocation by remember { mutableStateOf(false) }
 
     // Current selected point (from map tap or search select)
     var selectedPoint by remember { mutableStateOf<PlaceResult?>(null) }
@@ -239,24 +240,36 @@ fun MapComposeScreen(
     var showReportDialog by remember { mutableStateOf(false) }
     var reportSeverity by remember { mutableStateOf(3f) }
 
+    var webViewLoadError by remember { mutableStateOf<String?>(null) }
+
     Box(modifier = Modifier.fillMaxSize()) {
         // --- MAP (dominant) ---
         AndroidView(
             factory = { ctx ->
                 val wv = WebView(ctx)
+                WebView.setWebContentsDebuggingEnabled(true)
                 webViewRef = wv
                 setupWebViewForLeaflet(
                     wv,
                     onMapClick = { lat, lon ->
                         // Update nearby route chips for this tapped location
                         routeVm.loadNearby(lat, lon)
+                        didLoadNearbyForUserLocation = true
 
                         val p = PlaceResult(label = "Dropped pin", lat = lat, lon = lon)
                         selectedPoint = p
                         onMapClick(lat, lon)
                         showReportDialog = true
                     },
-                    onUserLocation = { lat, lon -> lastUserLatLon = lat to lon }
+                    onUserLocation = { lat, lon ->
+                        lastUserLatLon = lat to lon
+                        // Load nearby routes once on first location fix.
+                        if (!didLoadNearbyForUserLocation) {
+                            didLoadNearbyForUserLocation = true
+                            routeVm.loadNearby(lat, lon)
+                        }
+                    },
+                    onError = { msg -> webViewLoadError = msg }
                 )
 
                 refreshPermissionState()
@@ -268,6 +281,21 @@ fun MapComposeScreen(
             update = { wv -> webViewRef = wv },
             modifier = Modifier.fillMaxSize()
         )
+
+        // If WebView can't load Leaflet/tiles, show a helpful overlay instead of a silent blank screen.
+        if (webViewLoadError != null) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Map failed to load", style = MaterialTheme.typography.titleMedium)
+                    Text(webViewLoadError ?: "Unknown error")
+                    Text("Common fixes: ensure emulator has internet access; disable proxy/VPN; try another network.")
+                }
+            }
+        }
 
         // --- TOP overlay header ---
         Column(
@@ -476,7 +504,8 @@ fun MapComposeScreen(
 private fun setupWebViewForLeaflet(
     wv: WebView,
     onMapClick: (Double, Double) -> Unit,
-    onUserLocation: (Double, Double) -> Unit
+    onUserLocation: (Double, Double) -> Unit,
+    onError: (String) -> Unit
 ) {
     val settings: WebSettings = wv.settings
     settings.javaScriptEnabled = true
@@ -499,12 +528,16 @@ private fun setupWebViewForLeaflet(
 
     wv.webViewClient = object : WebViewClient() {
         override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-            Log.e("LeafletWebView", "onReceivedError url=${request?.url} error=${error?.description}")
+            val msg = "WebView load error url=${request?.url} error=${error?.description}"
+            Log.e("LeafletWebView", msg)
+            onError(msg)
             super.onReceivedError(view, request, error)
         }
 
         override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
-            Log.e("LeafletWebView", "onReceivedHttpError url=${request?.url} status=${errorResponse?.statusCode}")
+            val msg = "WebView HTTP error url=${request?.url} status=${errorResponse?.statusCode}"
+            Log.e("LeafletWebView", msg)
+            onError(msg)
             super.onReceivedHttpError(view, request, errorResponse)
         }
     }
