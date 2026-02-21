@@ -50,8 +50,15 @@ router.get('/api/v1/osm/routes/nearby', async (req, res) => {
 
     return res.json({ ok: true, data: routes });
   } catch (e: any) {
-    console.error('/api/v1/osm/routes/nearby error', e?.message || e);
-    return res.status(500).json({ ok: false, error: e?.message || 'Failed' });
+    const msg = e?.message || String(e);
+    const status = e?.response?.status;
+
+    // Upstream Overpass often 504s; degrade gracefully.
+    if (status === 504 || /504/.test(msg) || /timeout/i.test(msg)) {
+      return res.json({ ok: true, data: [], warning: 'Overpass timeout; no nearby routes available right now.' });
+    }
+
+    return res.status(500).json({ ok: false, error: msg });
   }
 });
 
