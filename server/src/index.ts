@@ -17,6 +17,7 @@ import { duplicateSubmissionProtection } from './middleware/duplicateDetection';
 import tomtomDebugRoute from './routes/tomtomDebugRoute';
 import trafficRoute from './routes/trafficRoute';
 import searchRoute from './routes/searchRoute';
+import osmRoutes from './routes/osmRoutes';
 import { startTomTomScheduler } from './tasks/tomtomScheduler';
 
 
@@ -193,6 +194,8 @@ app.use(tomtomDebugRoute);
 app.use(trafficRoute);
 // Mount search routes (GET /api/v1/search and GET /api/v1/reverse)
 app.use(searchRoute);
+// Mount OSM/Overpass route discovery + GeoJSON (GET /api/v1/osm/routes, /api/v1/osm/routes/:ref/geojson)
+app.use(osmRoutes);
 
 // --- Auth routes ---
 app.post('/api/v1/auth/register', registerLimiter, async (req: Request, res: Response) => {
