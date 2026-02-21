@@ -248,6 +248,9 @@ fun MapComposeScreen(
                 setupWebViewForLeaflet(
                     wv,
                     onMapClick = { lat, lon ->
+                        // Update nearby route chips for this tapped location
+                        routeVm.loadNearby(lat, lon)
+
                         val p = PlaceResult(label = "Dropped pin", lat = lat, lon = lon)
                         selectedPoint = p
                         onMapClick(lat, lon)
