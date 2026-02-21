@@ -7,6 +7,15 @@
         </trust-anchors>
     </base-config>
 
+    <!-- Allow HTTPS to common map hosts used by leaflet_map.html -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">unpkg.com</domain>
+        <domain includeSubdomains="true">tile.openstreetmap.org</domain>
+        <domain includeSubdomains="true">a.tile.openstreetmap.org</domain>
+        <domain includeSubdomains="true">b.tile.openstreetmap.org</domain>
+        <domain includeSubdomains="true">c.tile.openstreetmap.org</domain>
+    </domain-config>
+
     <!-- Local dev: allow emulator -> host loopback (Retrofit baseUrl http://10.0.2.2:3000/) -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">10.0.2.2</domain>
