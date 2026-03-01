@@ -183,6 +183,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2")
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.6.2")
 
+    // osmdroid for native map rendering (replacing WebView)
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
+
     // TomTom Maps SDK - include only when credentials are present or property enabled.
     val tomtomUser: String? = providers.gradleProperty("TOMTOM_REPO_USER").orNull ?: System.getenv("TOMTOM_REPO_USER")
     val tomtomPassword: String? = providers.gradleProperty("TOMTOM_REPO_PASSWORD").orNull ?: System.getenv("TOMTOM_REPO_PASSWORD")
