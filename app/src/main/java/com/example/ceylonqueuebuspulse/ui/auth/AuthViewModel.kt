@@ -123,4 +123,6 @@ class AuthViewModel(
     fun consumeMessages() {
         _uiState.value = _uiState.value.copy(errorMessage = null, successMessage = null)
     }
+
+    fun getUserId(): String? = authRepository.getUserId()
 }
