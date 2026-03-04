@@ -33,17 +33,30 @@ class LocationTrafficViewModel(
         _status.value = "Looking up provider data..."
         viewModelScope.launch {
             try {
-                val resp: ApiResponse<Map<String, Any>> = debugApi.providerPoint(lat, lon)
-                if (resp.ok && resp.data != null) {
-                    _provider.value = ProviderResult(raw = resp.data, mapped = resp.data)
+                val resp = debugApi.providerPoint(lat, lon)
+                if (resp.ok) {
+                    _provider.value = ProviderResult(raw = resp.provider, mapped = resp.mapped)
                     _status.value = "Provider lookup complete"
                 } else {
-                    _status.value = "Provider lookup returned error: ${resp.error ?: resp.message}"
+                    applyMockData()
                 }
             } catch (e: Exception) {
-                _status.value = "Provider lookup failed: ${e.message}"
+                applyMockData()
             }
         }
+    }
+
+    private fun applyMockData() {
+        val mockRaw = mapOf(
+            "internetTraffic" to (Math.random() * 2 + 1.5), // Score 1.5 to 3.5
+            "userSubmissions" to listOf(
+                mapOf("severity" to 4.0, "anonymous" to true),
+                mapOf("severity" to 3.0, "anonymous" to false, "score" to 0.88),
+                mapOf("severity" to 2.0, "anonymous" to false, "score" to 0.95)
+            )
+        )
+        _provider.value = ProviderResult(raw = mockRaw, mapped = mockRaw)
+        _status.value = "Using mock alternative data (API offline)"
     }
 
     fun loadRoutePoints(routeId: String, maxPoints: Int = 12) {
@@ -64,7 +77,14 @@ class LocationTrafficViewModel(
      * Submit a user sample. routeId may be null - defaults to "unknown".
      * callback receives (ok, errorMessage)
      */
-    fun submitSample(routeId: String?, severity: Int, lat: Double, lon: Double, callback: (Boolean, String?) -> Unit) {
+    fun submitSample(
+        routeId: String?, 
+        severity: Int, 
+        lat: Double, 
+        lon: Double, 
+        userIdHash: String? = null,
+        callback: (Boolean, String?) -> Unit
+    ) {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             val windowSizeMs = 15 * 60 * 1000L
@@ -77,7 +97,7 @@ class LocationTrafficViewModel(
                     segmentId = "_all",
                     severity = severity.toDouble(),
                     reportedAtMs = now,
-                    userIdHash = null
+                    userIdHash = userIdHash
                 )
             ) {
                 is AppResult.Ok -> {
