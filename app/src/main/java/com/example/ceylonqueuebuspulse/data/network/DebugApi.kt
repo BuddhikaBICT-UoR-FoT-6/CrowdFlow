@@ -16,10 +16,16 @@ data class RoutePoint(
     val severity: Double? = null
 )
 
+data class ProviderPointResponse(
+    val ok: Boolean,
+    val mapped: Map<String, Any>?,
+    val provider: Map<String, Any>?
+)
+
 interface DebugApi {
     // GET /api/v1/debug/provider/point?lat=...&lon=...
     @GET("api/v1/debug/provider/point")
-    suspend fun providerPoint(@Query("lat") lat: Double, @Query("lon") lon: Double): ApiResponse<Map<String, Any>>
+    suspend fun providerPoint(@Query("lat") lat: Double, @Query("lon") lon: Double): ProviderPointResponse
 
     // GET /api/v1/routes/{routeId}/points?maxPoints=12&windowStartMs=...
     @GET("api/v1/routes/{routeId}/points")
