@@ -54,5 +54,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Ceylon Queue + Bus Pulse"
+rootProject.name = "CrowdFlow"
 include(":app")
