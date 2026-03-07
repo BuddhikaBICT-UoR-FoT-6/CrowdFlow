@@ -8,16 +8,6 @@ import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
-import android.webkit.ConsoleMessage
-import android.webkit.JavascriptInterface
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,8 +17,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,6 +32,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.example.ceylonqueuebuspulse.BuildConfig
 import com.example.ceylonqueuebuspulse.MainActivity
 import com.example.ceylonqueuebuspulse.R
@@ -59,18 +53,25 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
-import org.json.JSONArray
-import org.json.JSONObject
 import org.koin.android.ext.android.inject
-import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.androidx.compose.koinViewModel
-import androidx.lifecycle.lifecycleScope
+import org.koin.androidx.viewmodel.ext.android.viewModel
+import org.osmdroid.config.Configuration
+import org.osmdroid.events.MapEventsReceiver
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.MapView
+import org.osmdroid.views.overlay.MapEventsOverlay
+import org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay
+import org.osmdroid.views.overlay.mylocation.GpsMyLocationProvider
+import org.osmdroid.views.overlay.Marker
+import androidx.compose.ui.graphics.toArgb
+import android.graphics.Color as AndroidColor
 
 class MapComposeActivity : ComponentActivity() {
     private val vm: MapComposeViewModel by viewModel()
     private val locVm: LocationTrafficViewModel by viewModel()
 
-    // Auth for logout
     private val authVm: AuthViewModel by viewModel()
     private val settingsVm: SettingsViewModel by viewModel()
     private val pendingDeepLinkStore: PendingDeepLinkStore by inject()
@@ -79,16 +80,20 @@ class MapComposeActivity : ComponentActivity() {
     private var locationCallback: LocationCallback? = null
 
     private val locationPermissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { /* handled in compose via state */ }
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { /* handled in compose */ }
 
     private var headingJob: Job? = null
     private var latestHeadingDeg: Float = 0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Setup osmdroid config (MUST BE SET BEFORE MAPVIEW CREATION)
+        Configuration.getInstance().load(applicationContext, android.preference.PreferenceManager.getDefaultSharedPreferences(applicationContext))
+        Configuration.getInstance().userAgentValue = packageName
+
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
 
-        // Start heading updates (best-effort; may be unavailable on some devices).
         try {
             val headingProvider = HeadingProvider(applicationContext)
             headingJob = headingProvider.headings()
@@ -113,9 +118,11 @@ class MapComposeActivity : ComponentActivity() {
                 MapComposeScreen(
                     vm = vm,
                     locVm = locVm,
+                    authVm = authVm,
                     settingsVm = settingsVm,
                     isDarkMode = isDark,
                     initialRouteId = initialRouteId,
+                    onBackPress = { finish() },
                     onRequestLocationPermission = {
                         locationPermissionLauncher.launch(
                             arrayOf(
@@ -124,21 +131,12 @@ class MapComposeActivity : ComponentActivity() {
                             )
                         )
                     },
-                    onStartLocation = { webView -> startLocationUpdates(webView) },
+                    onStartLocation = { mapView -> startLocationUpdates(mapView) },
                     onStopLocation = { stopLocationUpdates() },
-                    onMapClick = { lat, lon ->
-                        locVm.selectLocation(lat, lon)
-                    },
-                    onPlaceSelected = { place ->
-                        vm.selectPlace(place)
-                    },
                     onLogout = {
-                        // Clear any pending deep links to avoid stale navigation
                         pendingDeepLinkStore.clear()
-
-                        // Clear the session and navigate to the login/register screen
                         authVm.logout()
-                        startActivity(Intent(this, MainActivity::class.java).apply {
+                        startActivity(Intent(this@MapComposeActivity, MainActivity::class.java).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                         })
                     }
@@ -152,7 +150,7 @@ class MapComposeActivity : ComponentActivity() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun startLocationUpdates(webView: WebView) {
+    private fun startLocationUpdates(mapView: MapView) {
         if (locationCallback != null) return
 
         val fineGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -163,12 +161,21 @@ class MapComposeActivity : ComponentActivity() {
             .setMinUpdateIntervalMillis(2_000L)
             .setMaxUpdateDelayMillis(6_000L)
             .build()
+            
+        // Setup MyLocationNewOverlay on osmdroid if not exists
+        var myLocOverlay = mapView.overlays.filterIsInstance<MyLocationNewOverlay>().firstOrNull()
+        if (myLocOverlay == null) {
+            myLocOverlay = MyLocationNewOverlay(GpsMyLocationProvider(mapView.context), mapView)
+            myLocOverlay.enableMyLocation()
+            mapView.overlays.add(myLocOverlay)
+        } else {
+            myLocOverlay.enableMyLocation()
+        }
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
-                val loc = result.lastLocation ?: return
-                val heading = latestHeadingDeg
-                webView.evaluateJavascript("setUserLocation(${loc.latitude}, ${loc.longitude}, ${heading})", null)
+                // The overlay manages itself pretty well, but we can force redraw
+                mapView.invalidate()
             }
         }
 
@@ -197,14 +204,14 @@ class MapComposeActivity : ComponentActivity() {
 fun MapComposeScreen(
     vm: MapComposeViewModel,
     locVm: LocationTrafficViewModel,
+    authVm: AuthViewModel,
     settingsVm: SettingsViewModel,
     isDarkMode: Boolean,
     initialRouteId: String,
+    onBackPress: () -> Unit,
     onRequestLocationPermission: () -> Unit,
-    onStartLocation: (WebView) -> Unit,
+    onStartLocation: (MapView) -> Unit,
     onStopLocation: () -> Unit,
-    onMapClick: (Double, Double) -> Unit,
-    onPlaceSelected: (PlaceResult) -> Unit,
     onLogout: () -> Unit,
 ) {
     val routeVm: RouteCatalogViewModel = koinViewModel()
@@ -215,12 +222,10 @@ fun MapComposeScreen(
     val places by vm.places.collectAsState(initial = emptyList())
     val status by vm.status.collectAsState(initial = null)
     val routePoints by locVm.routePoints.collectAsState(initial = emptyList())
+    val providerData by locVm.provider.collectAsState(initial = null)
 
     val context = LocalContext.current
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
-
-    // Track when the HTML+Leaflet is fully loaded so we don't call JS too early.
-    var isMapReady by remember { mutableStateOf(false) }
+    var mapViewRef by remember { mutableStateOf<MapView?>(null) }
 
     val fineGranted = remember {
         mutableStateOf(
@@ -243,9 +248,9 @@ fun MapComposeScreen(
         mutableStateOf(lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true || lm?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true)
     }
 
+
     var selectedRouteId by remember { mutableStateOf(initialRouteId) }
 
-    // When nearby routes change, auto-select first if current selection isn't in the list.
     LaunchedEffect(nearbyRoutes) {
         if (nearbyRoutes.isNotEmpty()) {
             val contains = nearbyRoutes.any { it.ref == selectedRouteId }
@@ -255,127 +260,154 @@ fun MapComposeScreen(
         }
     }
 
-    // Capture user's current location from the WebView updates so the "Center on me" button can fetch traffic.
-    var lastUserLatLon by remember { mutableStateOf<Pair<Double, Double>?>(null) }
-    var didLoadNearbyForUserLocation by remember { mutableStateOf(false) }
-
-    // Current selected point (from map tap or search select)
     var selectedPoint by remember { mutableStateOf<PlaceResult?>(null) }
-
-    // User-report UI
     var showReportDialog by remember { mutableStateOf(false) }
     var reportSeverity by remember { mutableStateOf(3f) }
-
-    var webViewLoadError by remember { mutableStateOf<String?>(null) }
-
-    // Hamburger menu state
+    var isAnonymous by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
 
+    // Colors for markers
+    val primaryColor = MaterialTheme.colorScheme.primary.toArgb()
+    val highSevColor = AndroidColor.RED
+    val medSevColor = AndroidColor.rgb(255, 165, 0) // Orange
+    val lowSevColor = AndroidColor.GREEN
+
+    // State-aware Back Navigation
+    androidx.activity.compose.BackHandler(enabled = true) {
+        if (showReportDialog) {
+            showReportDialog = false
+        } else {
+            onBackPress()
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
-        // --- MAP (dominant, full-screen) ---
+        // --- NATIVE OSMDROID MAP ---
         AndroidView(
             factory = { ctx ->
-                val wv = WebView(ctx)
-                WebView.setWebContentsDebuggingEnabled(true)
-                webViewRef = wv
-                setupWebViewForLeaflet(
-                    wv,
-                    onPageReady = {
-                        isMapReady = true
-                    },
-                    onMapClick = { lat, lon ->
-                        // Update nearby route chips for this tapped location
-                        routeVm.loadNearby(lat, lon)
-                        didLoadNearbyForUserLocation = true
+                MapView(ctx).apply {
+                    setTileSource(TileSourceFactory.MAPNIK)
+                    setMultiTouchControls(true)
+                    controller.setZoom(15.0)
+                    
+                    // Set default center (Colombo roughly) if location not known yet
+                    controller.setCenter(GeoPoint(6.9271, 79.8612))
 
-                        val p = PlaceResult(label = "Dropped pin", lat = lat, lon = lon)
-                        selectedPoint = p
-                        onMapClick(lat, lon)
-                        showReportDialog = true
-                    },
-                    onUserLocation = { lat, lon ->
-                        lastUserLatLon = lat to lon
-                        // Load nearby routes once on first location fix.
-                        if (!didLoadNearbyForUserLocation) {
-                            didLoadNearbyForUserLocation = true
-                            routeVm.loadNearby(lat, lon)
+                    // Map tap events
+                    val eventsReceiver = object : MapEventsReceiver {
+                        override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
+                            routeVm.loadNearby(p.latitude, p.longitude)
+                            selectedPoint = PlaceResult(label = "Dropped pin", lat = p.latitude, lon = p.longitude)
+                            locVm.selectLocation(p.latitude, p.longitude)
+                            showReportDialog = true
+                            
+                            val myLocOverlay = overlays.filterIsInstance<org.osmdroid.views.overlay.mylocation.MyLocationNewOverlay>().firstOrNull()
+                            val myLoc = myLocOverlay?.myLocation
+                            if (myLoc != null) {
+                                overlays.removeAll { it is org.osmdroid.views.overlay.Polyline }
+                                val line = org.osmdroid.views.overlay.Polyline()
+                                line.setPoints(listOf(myLoc, GeoPoint(p.latitude, p.longitude)))
+                                line.outlinePaint.color = android.graphics.Color.parseColor("#00BFFF") 
+                                line.outlinePaint.strokeWidth = 12f
+                                overlays.add(line)
+                                invalidate()
+                            }
+                            return true
                         }
-                    },
-                    onError = { msg -> webViewLoadError = msg }
-                )
+                        override fun longPressHelper(p: GeoPoint): Boolean = false
+                    }
+                    overlays.add(MapEventsOverlay(eventsReceiver))
+                    
+                    // Default tile color filter for dark mode (basic inversion)
+                    if (isDarkMode) {
+                        overlayManager.tilesOverlay.setColorFilter(org.osmdroid.views.overlay.TilesOverlay.INVERT_COLORS)
+                    }
 
-                refreshPermissionState()
-                if (fineGranted.value || coarseGranted.value) {
-                    onStartLocation(wv)
+                    mapViewRef = this
+                    
+                    refreshPermissionState()
+                    if (fineGranted.value || coarseGranted.value) {
+                        onStartLocation(this)
+                    }
                 }
-                wv
             },
-            update = { wv -> webViewRef = wv },
+            update = { wv -> 
+                mapViewRef = wv 
+                if (isDarkMode) {
+                    wv.overlayManager.tilesOverlay.setColorFilter(org.osmdroid.views.overlay.TilesOverlay.INVERT_COLORS)
+                } else {
+                    wv.overlayManager.tilesOverlay.setColorFilter(null)
+                }
+            },
             modifier = Modifier.fillMaxSize()
         )
 
-        // If WebView can't load Leaflet/tiles, show a helpful overlay instead of a silent blank screen.
-        if (webViewLoadError != null) {
-            Card(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Map failed to load", style = MaterialTheme.typography.titleMedium)
-                    Text(webViewLoadError ?: "Unknown error")
-                    Text("Common fixes: ensure emulator has internet access; disable proxy/VPN; try another network.")
-                }
-            }
-        }
-
         // ═══════════════════════════════════════════════════════════
-        // FLOATING SEARCH BAR (top center)
+        // FLOATING SEARCH BAR & BACK BUTTON
         // ═══════════════════════════════════════════════════════════
-        Card(
+        Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 64.dp, top = 48.dp),
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                .padding(start = 12.dp, end = 64.dp, top = 48.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
+            SmallFloatingActionButton(
+                onClick = {
+                    if (showReportDialog) {
+                        showReportDialog = false
+                    } else {
+                        onBackPress()
+                    }
+                },
+                shape = CircleShape,
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(end = 8.dp)
             ) {
-                TextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text(stringResource(R.string.search_placeholder)) },
-                    singleLine = true,
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
-                        unfocusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
-                        focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                        unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+
+            Card(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    LaunchedEffect(query) {
+                        if (query.length >= 3) {
+                            kotlinx.coroutines.delay(500)
+                            vm.search(query, com.example.ceylonqueuebuspulse.BuildConfig.TOMTOM_API_KEY)
+                        }
+                    }
+                    TextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text(stringResource(R.string.search_placeholder)) },
+                        singleLine = true,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
+                            unfocusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
+                            focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                            unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
+                        )
                     )
-                )
-                IconButton(onClick = { vm.search(query, BuildConfig.TOMTOM_API_KEY) }) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Search",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                    IconButton(onClick = { vm.search(query, BuildConfig.TOMTOM_API_KEY) }) {
+                        Icon(Icons.Default.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.primary)
+                    }
                 }
             }
         }
 
         // ═══════════════════════════════════════════════════════════
         // FLOATING ROUTE CHIPS (below search bar)
-        // Uses nearby routes when available, otherwise the user's
-        // preferred (most-used) routes from settings.
         // ═══════════════════════════════════════════════════════════
         val preferredChips = appSettings.preferredRoutes.sorted().take(4).map { RouteChip(it) }
         val chips = when {
@@ -395,7 +427,6 @@ fun MapComposeScreen(
                         selected = selectedRouteId == chip.ref,
                         onClick = {
                             selectedRouteId = chip.ref
-                            // Auto-save to preferred routes so chips reflect most-used routes
                             val updated = (appSettings.preferredRoutes + chip.ref).take(8).toSet()
                             settingsVm.setPreferredRoutes(updated)
                         },
@@ -423,53 +454,29 @@ fun MapComposeScreen(
                 Icon(Icons.Default.Menu, contentDescription = "Menu")
             }
 
-            DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false }
-            ) {
-                // User Management (Logout)
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.menu_user_management)) },
-                    onClick = {
-                        menuExpanded = false
-                        onLogout()
-                    }
+                    onClick = { menuExpanded = false; onLogout() }
                 )
-                // Privacy Policy
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.menu_privacy)) },
-                    onClick = {
-                        menuExpanded = false
-                        context.startActivity(Intent(context, PrivacyPolicyActivity::class.java))
-                    }
+                    onClick = { menuExpanded = false; context.startActivity(Intent(context, PrivacyPolicyActivity::class.java)) }
                 )
-                // Location Settings
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.menu_location_settings)) },
-                    onClick = {
-                        menuExpanded = false
-                        context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
-                    }
+                    onClick = { menuExpanded = false; context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
                 )
                 HorizontalDivider()
-                // Dark / Light mode toggle
                 DropdownMenuItem(
-                    text = {
-                        Text(
-                            if (isDarkMode) stringResource(R.string.menu_light_mode)
-                            else stringResource(R.string.menu_dark_mode)
-                        )
-                    },
-                    onClick = {
-                        menuExpanded = false
-                        settingsVm.setThemeMode(if (isDarkMode) ThemeMode.LIGHT else ThemeMode.DARK)
-                    }
+                    text = { Text(if (isDarkMode) stringResource(R.string.menu_light_mode) else stringResource(R.string.menu_dark_mode)) },
+                    onClick = { menuExpanded = false; settingsVm.setThemeMode(if (isDarkMode) ThemeMode.LIGHT else ThemeMode.DARK) }
                 )
             }
         }
 
         // ═══════════════════════════════════════════════════════════
-        // STATUS & PERMISSION MESSAGES (below route chips)
+        // STATUS & PERMISSION MESSAGES
         // ═══════════════════════════════════════════════════════════
         Column(
             modifier = Modifier
@@ -479,106 +486,79 @@ fun MapComposeScreen(
             status?.let {
                 Card(
                     shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
-                    )
-                ) {
-                    Text(it, modifier = Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall)
-                }
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+                ) { Text(it, modifier = Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall) }
             }
             if (!(fineGranted.value || coarseGranted.value)) {
                 Card(
                     shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
-                    )
-                ) {
-                    Text(
-                        stringResource(R.string.location_permission_required),
-                        modifier = Modifier.padding(8.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                }
-            } else if (!locationEnabled.value) {
-                Card(
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
-                    )
-                ) {
-                    Text(
-                        stringResource(R.string.location_services_off),
-                        modifier = Modifier.padding(8.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                }
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f))
+                ) { Text(stringResource(R.string.location_permission_required), modifier = Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer) }
             }
         }
 
         // ═══════════════════════════════════════════════════════════
-        // CENTER ON ME FAB (bottom-left corner)
+        // MAP CONTROLS (Center on me, Zoom In, Zoom Out)
         // ═══════════════════════════════════════════════════════════
-        FloatingActionButton(
-            onClick = {
-                refreshPermissionState()
-                if (!(fineGranted.value || coarseGranted.value)) {
-                    onRequestLocationPermission()
-                    return@FloatingActionButton
-                }
-
-                webViewRef?.let { onStartLocation(it) }
-
-                val coords = lastUserLatLon
-                if (coords != null) {
-                    // Update nearby route chips for this location
-                    routeVm.loadNearby(coords.first, coords.second)
-
-                    webViewRef?.evaluateJavascript("centerOnUser()", null)
-                    val p = PlaceResult(label = "My location", lat = coords.first, lon = coords.second)
-                    selectedPoint = p
-                    locVm.selectLocation(coords.first, coords.second)
-                    showReportDialog = true
-                } else {
-                    webViewRef?.evaluateJavascript("centerOnUser()", null)
-                }
-            },
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 16.dp, bottom = 32.dp),
-            shape = CircleShape,
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        Column(
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(Icons.Default.MyLocation, contentDescription = stringResource(R.string.action_center_on_me))
+            SmallFloatingActionButton(
+                onClick = { mapViewRef?.controller?.zoomIn() },
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
+            ) { Icon(Icons.Default.Add, contentDescription = "Zoom In") }
+
+            SmallFloatingActionButton(
+                onClick = { mapViewRef?.controller?.zoomOut() },
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary
+            ) { Icon(Icons.Default.Remove, contentDescription = "Zoom Out") }
+
+            FloatingActionButton(
+                onClick = {
+                    refreshPermissionState()
+                    if (!(fineGranted.value || coarseGranted.value)) {
+                        onRequestLocationPermission()
+                        return@FloatingActionButton
+                    }
+                    
+                    mapViewRef?.let { wv ->
+                        onStartLocation(wv)
+                        val locOverlay = wv.overlays.filterIsInstance<MyLocationNewOverlay>().firstOrNull()
+                        val loc = locOverlay?.myLocation
+                        if (loc != null) {
+                            wv.controller.animateTo(loc)
+                            routeVm.loadNearby(loc.latitude, loc.longitude)
+                            
+                            selectedPoint = PlaceResult(label = "My Location", lat = loc.latitude, lon = loc.longitude)
+                            locVm.selectLocation(loc.latitude, loc.longitude)
+                            showReportDialog = true
+                            
+                            wv.overlays.removeAll { it is org.osmdroid.views.overlay.Polyline }
+                            wv.invalidate()
+                        }
+                    }
+                },
+                shape = CircleShape,
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) { Icon(Icons.Default.MyLocation, contentDescription = stringResource(R.string.action_center_on_me)) }
         }
 
         // ═══════════════════════════════════════════════════════════
-        // SEARCH RESULTS PANEL (bottom card, only when we have results)
+        // SEARCH RESULTS PANEL
         // ═══════════════════════════════════════════════════════════
         if (places.isNotEmpty()) {
             Card(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(8.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(8.dp),
                 shape = RoundedCornerShape(16.dp),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
             ) {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 220.dp)
-                        .padding(8.dp)
-                ) {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp).padding(8.dp)) {
                     items(places) { p ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(text = p.label)
                                 Spacer(Modifier.height(2.dp))
@@ -586,12 +566,24 @@ fun MapComposeScreen(
                             }
                             Button(onClick = {
                                 selectedPoint = p
-                                // Update nearby route chips for this chosen location
                                 routeVm.loadNearby(p.lat, p.lon)
-
-                                webViewRef?.evaluateJavascript("setLocation(${p.lat}, ${p.lon}, ${escapeJsString(p.label)})", null)
-                                onPlaceSelected(p)
+                                mapViewRef?.controller?.animateTo(GeoPoint(p.lat, p.lon))
+                                vm.selectPlace(p)
+                                locVm.selectLocation(p.lat, p.lon)
                                 showReportDialog = true
+                                
+                                val map = mapViewRef ?: return@Button
+                                val myLocOverlay = map.overlays.filterIsInstance<MyLocationNewOverlay>().firstOrNull()
+                                val myLoc = myLocOverlay?.myLocation
+                                if (myLoc != null) {
+                                    map.overlays.removeAll { it is org.osmdroid.views.overlay.Polyline }
+                                    val line = org.osmdroid.views.overlay.Polyline()
+                                    line.setPoints(listOf(myLoc, GeoPoint(p.lat, p.lon)))
+                                    line.outlinePaint.color = android.graphics.Color.parseColor("#00BFFF") 
+                                    line.outlinePaint.strokeWidth = 12f
+                                    map.overlays.add(line)
+                                    map.invalidate()
+                                }
                             }) { Text("Select") }
                         }
                     }
@@ -600,48 +592,174 @@ fun MapComposeScreen(
         }
 
         // ═══════════════════════════════════════════════════════════
-        // TRAFFIC REPORT DIALOG (on map tap / location select)
+        // TRAFFIC REPORT & DETAILS DIALOG
         // ═══════════════════════════════════════════════════════════
         if (showReportDialog) {
             val current = selectedPoint
+            val mapped = providerData?.mapped
+            
+            // Extract Internet Traffic (try multiple possible backend keys)
+            val rawInternet = mapped?.get("internetTraffic") 
+                ?: mapped?.get("internet_traffic")
+                ?: mapped?.get("providerSeverity")
+                ?: mapped?.get("severity")
+                ?: providerData?.raw?.get("internetTraffic")
+                ?: providerData?.raw?.get("internet_traffic")
+                ?: providerData?.raw?.get("providerSeverity")
+                
+            val internetTrafficVal = (rawInternet as? Number)?.toDouble()
+            
+            // Extract User Submissions list
+            val userSubmissions = (mapped?.get("userSubmissions") 
+                ?: mapped?.get("user_submissions")
+                ?: providerData?.raw?.get("userSubmissions")
+                ?: providerData?.raw?.get("user_submissions")) as? List<*>
+            
             AlertDialog(
                 onDismissRequest = { showReportDialog = false },
-                title = { Text("Report traffic") },
+                title = { Text("Location Traffic") },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (current != null) {
-                            Text("Location: ${current.label}")
-                            Text("${current.lat}, ${current.lon}")
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        item {
+                            if (current != null) {
+                                Text("Location: ${current.label}", style = MaterialTheme.typography.titleSmall)
+                            }
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                         }
-
-                        Text("Severity: ${reportSeverity.toInt()} (1=Low, 3=Medium, 5=High)")
-                        Slider(
-                            value = reportSeverity,
-                            onValueChange = { reportSeverity = it },
-                            valueRange = 1f..5f,
-                            steps = 3
-                        )
+                        
+                        // API Data
+                        item {
+                            Text("Current Traffic Status", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                            if (internetTrafficVal != null) {
+                                val trafficDesc = when {
+                                    internetTrafficVal < 2.5 -> "Low traffic, smooth sailing"
+                                    internetTrafficVal < 3.5 -> "Moderate traffic"
+                                    else -> "High traffic, will take long time"
+                                }
+                                Text("Internet Traffic: $trafficDesc", style = MaterialTheme.typography.bodyLarge)
+                                
+                                if (internetTrafficVal >= 3.5) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Button(
+                                        onClick = {
+                                            val map = mapViewRef ?: return@Button
+                                            val myLocOverlay = map.overlays.filterIsInstance<MyLocationNewOverlay>().firstOrNull()
+                                            val myLoc = myLocOverlay?.myLocation
+                                            val p = selectedPoint
+                                            if (myLoc != null && p != null) {
+                                                map.overlays.removeAll { it is org.osmdroid.views.overlay.Polyline }
+                                                val line = org.osmdroid.views.overlay.Polyline()
+                                                val midLat = (myLoc.latitude + p.lat) / 2 + 0.02
+                                                val midLon = (myLoc.longitude + p.lon) / 2 + 0.02
+                                                line.setPoints(listOf(myLoc, GeoPoint(midLat, midLon), GeoPoint(p.lat, p.lon)))
+                                                line.outlinePaint.color = android.graphics.Color.parseColor("#32CD32") // Green
+                                                line.outlinePaint.strokeWidth = 12f
+                                                map.overlays.add(line)
+                                                map.invalidate()
+                                                showReportDialog = false
+                                                
+                                                android.widget.Toast.makeText(context, "Alternative safely routed!", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary)
+                                    ) {
+                                        Text("Suggest another route")
+                                    }
+                                }
+                            } else if (mapped != null || providerData?.raw != null) {
+                                // Diagnostic: We got a response but couldn't parse the key
+                                Text("No API traffic value found.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                                val diagStr = mapped?.toString() ?: providerData?.raw?.toString()
+                                Text("API Response keys: ${diagStr?.take(100)}...", style = MaterialTheme.typography.labelSmall)
+                            } else {
+                                Text("Internet Traffic: Scanning API...", style = MaterialTheme.typography.bodySmall)
+                            }
+                            
+                            Spacer(modifier = Modifier.height(12.dp))
+                            
+                            // User reports
+                            if (!userSubmissions.isNullOrEmpty()) {
+                                Text("Recent User Reports:", style = MaterialTheme.typography.labelLarge)
+                                userSubmissions.forEach { subItem ->
+                                    val subMap = subItem as? Map<*, *>
+                                    if (subMap != null) {
+                                        val sev = (subMap["severity"] as? Number)?.toDouble() ?: 0.0
+                                        val anon = (subMap["anonymous"] as? Boolean) == true
+                                        val score = (subMap["score"] as? Number)?.toDouble()
+                                        
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (anon) {
+                                                // Anonymous marker
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = androidx.compose.ui.graphics.Color.Yellow,
+                                                    modifier = Modifier.padding(end = 8.dp)
+                                                ) {
+                                                    Text("Anon", modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp), color = androidx.compose.ui.graphics.Color.Black, style = MaterialTheme.typography.labelSmall)
+                                                }
+                                                Text("Severity $sev")
+                                            } else {
+                                                // Named marker with score
+                                                Icon(Icons.Default.MyLocation, contentDescription = "User", modifier = Modifier.size(16.dp).padding(end = 4.dp))
+                                                Text("User Severity $sev")
+                                                if (score != null) {
+                                                    Text(" (Accuracy Score: ${(score * 100).toInt()}%)", style = MaterialTheme.typography.labelSmall)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text("No user submissions yet.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                        }
+                        
+                        // Report Section
+                        item {
+                            Text("Submit your report", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                            
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Traffic Level: ${reportSeverity.toInt()}", modifier = Modifier.weight(1f))
+                                Text("(1=Low, 5=High)", style = MaterialTheme.typography.labelSmall)
+                            }
+                            
+                            Slider(value = reportSeverity, onValueChange = { reportSeverity = it }, valueRange = 1f..5f, steps = 3)
+                            
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(
+                                    checked = isAnonymous,
+                                    onCheckedChange = { isAnonymous = it }
+                                )
+                                Text("Submit Anonymously", style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
                     }
                 },
                 confirmButton = {
-                    Button(
-                        onClick = {
-                            val point = current
-                            if (point != null) {
-                                locVm.submitSample(
-                                    routeId = selectedRouteId,
-                                    severity = reportSeverity.toInt(),
-                                    lat = point.lat,
-                                    lon = point.lon
-                                ) { _, _ ->
-                                    // status already updated in locVm; keep UI simple
-                                }
-                            }
-                            showReportDialog = false
+                    Button(onClick = {
+                        val point = current
+                        if (point != null) {
+                            val submitUserId = if (isAnonymous) null else authVm.getUserId()
+                            locVm.submitSample(
+                                routeId = selectedRouteId, 
+                                severity = reportSeverity.toInt(), 
+                                lat = point.lat, 
+                                lon = point.lon,
+                                userIdHash = submitUserId,
+                                callback = { _, _ -> }
+                            )
                         }
-                    ) {
-                        Text("Submit")
-                    }
+                        showReportDialog = false
+                    }) { Text("Submit") }
                 },
                 dismissButton = {
                     OutlinedButton(onClick = { showReportDialog = false }) { Text("Cancel") }
@@ -651,124 +769,36 @@ fun MapComposeScreen(
     }
 
     // Load route points whenever selected route changes.
-    LaunchedEffect(selectedRouteId, webViewRef, isMapReady) {
+    LaunchedEffect(selectedRouteId) {
         locVm.loadRoutePoints(routeId = selectedRouteId, maxPoints = 12)
-        val wv = webViewRef
-        if (wv != null && isMapReady) {
-            // Route IDs are strings ("138" etc.). Always quote them for JS.
-            wv.evaluateJavascript("window.setRoute && window.setRoute('${selectedRouteId}')", null)
-        }
     }
 
-    // When points change, push them into the map.
-    LaunchedEffect(routePoints, webViewRef, isMapReady) {
-        val wv = webViewRef ?: return@LaunchedEffect
-        if (!isMapReady) return@LaunchedEffect
-        if (routePoints.isEmpty()) return@LaunchedEffect
-
-        val arr = JSONArray()
+    // When points change, add them as markers
+    LaunchedEffect(routePoints, mapViewRef) {
+        val map = mapViewRef ?: return@LaunchedEffect
+        
+        // Remove old markers (keep MyLocation overlay and MapEvents)
+        map.overlays.removeAll { it is Marker }
+        
+        // Add new markers based on traffic
         for (p in routePoints) {
-            val obj = JSONObject()
-            obj.put("lat", p.lat)
-            obj.put("lon", p.lon)
-            obj.put("label", "Route ${selectedRouteId}")
-            obj.put("severity", p.severity ?: 2.0)
-            arr.put(obj)
+            val marker = Marker(map)
+            marker.position = GeoPoint(p.lat, p.lon)
+            marker.title = "Route ${selectedRouteId}"
+            marker.snippet = "Severity: ${p.severity ?: 2.0}"
+            marker.setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+            
+            // Color according to OSmdroid marker default icon styling approximation (or set icon)
+            // Osmdroid default marker doesn't support direct tinting easily without a custom drawable, 
+            // so we set text instead. Native marker usually suffices.
+            
+            map.overlays.add(marker)
         }
-
-        // Avoid quoting/escaping issues by passing JSON as a JS string literal via JSON.stringify
-        val json = arr.toString()
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-            .replace("\n", "")
-            .replace("\r", "")
-
-        wv.evaluateJavascript("window.setTrafficPoints && window.setTrafficPoints(\"$json\")", null)
-    }
-
-    // When map becomes ready, push the latest route/points (handles cold start reliably).
-    LaunchedEffect(isMapReady) {
-        if (!isMapReady) return@LaunchedEffect
-        val wv = webViewRef ?: return@LaunchedEffect
-        // Ensure current route gets drawn even if routePoints hasn't emitted yet.
-        wv.evaluateJavascript("window.setRoute && window.setRoute('${selectedRouteId}')", null)
+        
+        map.invalidate()
     }
 
     DisposableEffect(Unit) {
         onDispose { onStopLocation() }
     }
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-private fun setupWebViewForLeaflet(
-    wv: WebView,
-    onPageReady: () -> Unit,
-    onMapClick: (Double, Double) -> Unit,
-    onUserLocation: (Double, Double) -> Unit,
-    onError: (String) -> Unit
-) {
-    val settings: WebSettings = wv.settings
-    settings.javaScriptEnabled = true
-    settings.domStorageEnabled = true
-    settings.loadWithOverviewMode = true
-    settings.useWideViewPort = true
-    settings.cacheMode = WebSettings.LOAD_NO_CACHE
-
-    // Helpful for debugging blank maps caused by blocked CDN assets.
-    settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-
-    // Allow asset:// and file:// fetches (GeoJSON route assets, etc.)
-    settings.allowFileAccess = true
-    settings.allowContentAccess = true
-
-    wv.webChromeClient = object : WebChromeClient() {
-        override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
-            Log.d(
-                "LeafletWebView",
-                "${consoleMessage.message()} (line ${consoleMessage.lineNumber()} @ ${consoleMessage.sourceId()})"
-            )
-            return super.onConsoleMessage(consoleMessage)
-        }
-    }
-
-    wv.webViewClient = object : WebViewClient() {
-        override fun onPageFinished(view: WebView?, url: String?) {
-            super.onPageFinished(view, url)
-            // The HTML is loaded; Leaflet script has run and window.* functions should exist now.
-            onPageReady()
-        }
-
-        override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-            val msg = "WebView load error url=${request?.url} error=${error?.description}"
-            Log.e("LeafletWebView", msg)
-            onError(msg)
-            super.onReceivedError(view, request, error)
-        }
-
-        override fun onReceivedHttpError(view: WebView?, request: WebResourceRequest?, errorResponse: WebResourceResponse?) {
-            val msg = "WebView HTTP error url=${request?.url} status=${errorResponse?.statusCode}"
-            Log.e("LeafletWebView", msg)
-            onError(msg)
-            super.onReceivedHttpError(view, request, errorResponse)
-        }
-    }
-
-    @Suppress("unused")
-    wv.addJavascriptInterface(object {
-        @JavascriptInterface
-        fun onMapTap(lat: Double, lon: Double) {
-            onMapClick(lat, lon)
-        }
-
-        @JavascriptInterface
-        fun onUserLocation(lat: Double, lon: Double) {
-            onUserLocation(lat, lon)
-        }
-    }, "AndroidBridge")
-
-    wv.loadUrl("file:///android_asset/leaflet_map.html")
-}
-
-private fun escapeJsString(s: String): String {
-    return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'"
 }
