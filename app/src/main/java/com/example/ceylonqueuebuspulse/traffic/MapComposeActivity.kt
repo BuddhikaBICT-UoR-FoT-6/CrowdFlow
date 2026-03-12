@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
@@ -20,15 +21,19 @@ import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -38,7 +43,11 @@ import com.example.ceylonqueuebuspulse.BuildConfig
 import com.example.ceylonqueuebuspulse.MainActivity
 import com.example.ceylonqueuebuspulse.R
 import com.example.ceylonqueuebuspulse.data.auth.PendingDeepLinkStore
+import com.example.ceylonqueuebuspulse.settings.SettingsViewModel
+import com.example.ceylonqueuebuspulse.settings.ThemeMode
+import com.example.ceylonqueuebuspulse.ui.PrivacyPolicyActivity
 import com.example.ceylonqueuebuspulse.ui.auth.AuthViewModel
+import com.example.ceylonqueuebuspulse.ui.theme.CeylonQueueBusPulseTheme
 import com.example.ceylonqueuebuspulse.util.HeadingProvider
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
@@ -56,7 +65,6 @@ import org.koin.android.ext.android.inject
 import org.koin.androidx.viewmodel.ext.android.viewModel
 import org.koin.androidx.compose.koinViewModel
 import androidx.lifecycle.lifecycleScope
-import androidx.compose.foundation.shape.RoundedCornerShape
 
 class MapComposeActivity : ComponentActivity() {
     private val vm: MapComposeViewModel by viewModel()
@@ -64,6 +72,7 @@ class MapComposeActivity : ComponentActivity() {
 
     // Auth for logout
     private val authVm: AuthViewModel by viewModel()
+    private val settingsVm: SettingsViewModel by viewModel()
     private val pendingDeepLinkStore: PendingDeepLinkStore by inject()
 
     private lateinit var fusedClient: FusedLocationProviderClient
@@ -93,37 +102,48 @@ class MapComposeActivity : ComponentActivity() {
         val initialRouteId = intent.getStringExtra(EXTRA_ROUTE_ID)?.trim().takeUnless { it.isNullOrEmpty() } ?: "138"
 
         setContent {
-            MapComposeScreen(
-                vm = vm,
-                locVm = locVm,
-                initialRouteId = initialRouteId,
-                onRequestLocationPermission = {
-                    locationPermissionLauncher.launch(
-                        arrayOf(
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-                            Manifest.permission.ACCESS_COARSE_LOCATION
-                        )
-                    )
-                },
-                onStartLocation = { webView -> startLocationUpdates(webView) },
-                onStopLocation = { stopLocationUpdates() },
-                onMapClick = { lat, lon ->
-                    locVm.selectLocation(lat, lon)
-                },
-                onPlaceSelected = { place ->
-                    vm.selectPlace(place)
-                },
-                onLogout = {
-                    // Clear any pending deep links to avoid stale navigation
-                    pendingDeepLinkStore.clear()
+            val settings by settingsVm.settings.collectAsState()
+            val isDark = when (settings.themeMode) {
+                ThemeMode.DARK -> true
+                ThemeMode.LIGHT -> false
+                ThemeMode.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
 
-                    // Clear the session and navigate to the login/register screen
-                    authVm.logout()
-                    startActivity(Intent(this, MainActivity::class.java).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                    })
-                }
-            )
+            CeylonQueueBusPulseTheme(darkTheme = isDark) {
+                MapComposeScreen(
+                    vm = vm,
+                    locVm = locVm,
+                    settingsVm = settingsVm,
+                    isDarkMode = isDark,
+                    initialRouteId = initialRouteId,
+                    onRequestLocationPermission = {
+                        locationPermissionLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION
+                            )
+                        )
+                    },
+                    onStartLocation = { webView -> startLocationUpdates(webView) },
+                    onStopLocation = { stopLocationUpdates() },
+                    onMapClick = { lat, lon ->
+                        locVm.selectLocation(lat, lon)
+                    },
+                    onPlaceSelected = { place ->
+                        vm.selectPlace(place)
+                    },
+                    onLogout = {
+                        // Clear any pending deep links to avoid stale navigation
+                        pendingDeepLinkStore.clear()
+
+                        // Clear the session and navigate to the login/register screen
+                        authVm.logout()
+                        startActivity(Intent(this, MainActivity::class.java).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        })
+                    }
+                )
+            }
         }
     }
 
@@ -172,10 +192,13 @@ class MapComposeActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MapComposeScreen(
     vm: MapComposeViewModel,
     locVm: LocationTrafficViewModel,
+    settingsVm: SettingsViewModel,
+    isDarkMode: Boolean,
     initialRouteId: String,
     onRequestLocationPermission: () -> Unit,
     onStartLocation: (WebView) -> Unit,
@@ -186,6 +209,7 @@ fun MapComposeScreen(
 ) {
     val routeVm: RouteCatalogViewModel = koinViewModel()
     val nearbyRoutes by routeVm.routes.collectAsState(initial = emptyList())
+    val appSettings by settingsVm.settings.collectAsState()
 
     var query by remember { mutableStateOf("") }
     val places by vm.places.collectAsState(initial = emptyList())
@@ -219,7 +243,6 @@ fun MapComposeScreen(
         mutableStateOf(lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true || lm?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true)
     }
 
-    // Replace selectedRouteId init: if initialRouteId not found yet, we'll auto-select first nearby route later.
     var selectedRouteId by remember { mutableStateOf(initialRouteId) }
 
     // When nearby routes change, auto-select first if current selection isn't in the list.
@@ -245,8 +268,11 @@ fun MapComposeScreen(
 
     var webViewLoadError by remember { mutableStateOf<String?>(null) }
 
+    // Hamburger menu state
+    var menuExpanded by remember { mutableStateOf(false) }
+
     Box(modifier = Modifier.fillMaxSize()) {
-        // --- MAP (dominant) ---
+        // --- MAP (dominant, full-screen) ---
         AndroidView(
             factory = { ctx ->
                 val wv = WebView(ctx)
@@ -303,90 +329,242 @@ fun MapComposeScreen(
             }
         }
 
-        // --- TOP overlay header ---
-        Column(
+        // ═══════════════════════════════════════════════════════════
+        // FLOATING SEARCH BAR (top center)
+        // ═══════════════════════════════════════════════════════════
+        Card(
             modifier = Modifier
+                .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.35f))
-                .padding(8.dp)
+                .padding(start = 16.dp, end = 64.dp, top = 48.dp),
+            shape = RoundedCornerShape(28.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(text = stringResource(id = R.string.app_name), color = Color.White)
-                OutlinedButton(onClick = onLogout) { Text(stringResource(id = R.string.action_logout)) }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextField(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Search place") }
+                    placeholder = { Text(stringResource(R.string.search_placeholder)) },
+                    singleLine = true,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
+                        unfocusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
+                        focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                        unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
+                    )
                 )
-                Button(onClick = { vm.search(query, BuildConfig.TOMTOM_API_KEY) }) { Text("Search") }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val chips = if (nearbyRoutes.isNotEmpty()) nearbyRoutes.take(4) else listOf(RouteChip("138"), RouteChip("174"), RouteChip("177"), RouteChip("120"))
-                chips.forEach { chip ->
-                    OutlinedButton(
-                        onClick = { selectedRouteId = chip.ref },
-                        enabled = selectedRouteId != chip.ref
-                    ) { Text(chip.ref) }
+                IconButton(onClick = { vm.search(query, BuildConfig.TOMTOM_API_KEY) }) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                 }
-
-                Spacer(Modifier.weight(1f))
-
-                OutlinedButton(onClick = {
-                    refreshPermissionState()
-                    if (!(fineGranted.value || coarseGranted.value)) {
-                        onRequestLocationPermission()
-                        return@OutlinedButton
-                    }
-
-                    webViewRef?.let { onStartLocation(it) }
-
-                    val coords = lastUserLatLon
-                    if (coords != null) {
-                        // Update nearby route chips for this location
-                        routeVm.loadNearby(coords.first, coords.second)
-
-                        webViewRef?.evaluateJavascript("centerOnUser()", null)
-                        val p = PlaceResult(label = "My location", lat = coords.first, lon = coords.second)
-                        selectedPoint = p
-                        locVm.selectLocation(coords.first, coords.second)
-                        showReportDialog = true
-                    } else {
-                        webViewRef?.evaluateJavascript("centerOnUser()", null)
-                    }
-                }) {
-                    Text(stringResource(id = R.string.action_center_on_me))
-                }
-            }
-
-            status?.let { Text(it, color = Color.White) }
-            if (!(fineGranted.value || coarseGranted.value)) {
-                Text(text = stringResource(id = R.string.location_permission_required), color = Color.White)
-            } else if (!locationEnabled.value) {
-                Text(text = stringResource(id = R.string.location_services_off), color = Color.White)
             }
         }
 
-        // --- Search results panel (only when we have results) ---
+        // ═══════════════════════════════════════════════════════════
+        // FLOATING ROUTE CHIPS (below search bar)
+        // Uses nearby routes when available, otherwise the user's
+        // preferred (most-used) routes from settings.
+        // ═══════════════════════════════════════════════════════════
+        val preferredChips = appSettings.preferredRoutes.sorted().take(4).map { RouteChip(it) }
+        val chips = when {
+            nearbyRoutes.isNotEmpty() -> nearbyRoutes.take(4)
+            preferredChips.isNotEmpty() -> preferredChips
+            else -> emptyList()
+        }
+        if (chips.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 16.dp, top = 108.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                chips.forEach { chip ->
+                    FilterChip(
+                        selected = selectedRouteId == chip.ref,
+                        onClick = {
+                            selectedRouteId = chip.ref
+                            // Auto-save to preferred routes so chips reflect most-used routes
+                            val updated = (appSettings.preferredRoutes + chip.ref).take(8).toSet()
+                            settingsVm.setPreferredRoutes(updated)
+                        },
+                        label = { Text(chip.ref, style = MaterialTheme.typography.labelSmall) },
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // HAMBURGER FAB (top-right corner)
+        // ═══════════════════════════════════════════════════════════
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 48.dp, end = 12.dp)
+        ) {
+            SmallFloatingActionButton(
+                onClick = { menuExpanded = true },
+                shape = CircleShape,
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) {
+                Icon(Icons.Default.Menu, contentDescription = "Menu")
+            }
+
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false }
+            ) {
+                // User Management (Logout)
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.menu_user_management)) },
+                    onClick = {
+                        menuExpanded = false
+                        onLogout()
+                    }
+                )
+                // Privacy Policy
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.menu_privacy)) },
+                    onClick = {
+                        menuExpanded = false
+                        context.startActivity(Intent(context, PrivacyPolicyActivity::class.java))
+                    }
+                )
+                // Location Settings
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.menu_location_settings)) },
+                    onClick = {
+                        menuExpanded = false
+                        context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                    }
+                )
+                HorizontalDivider()
+                // Dark / Light mode toggle
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (isDarkMode) stringResource(R.string.menu_light_mode)
+                            else stringResource(R.string.menu_dark_mode)
+                        )
+                    },
+                    onClick = {
+                        menuExpanded = false
+                        settingsVm.setThemeMode(if (isDarkMode) ThemeMode.LIGHT else ThemeMode.DARK)
+                    }
+                )
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // STATUS & PERMISSION MESSAGES (below route chips)
+        // ═══════════════════════════════════════════════════════════
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(start = 16.dp, top = 148.dp, end = 16.dp)
+        ) {
+            status?.let {
+                Card(
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
+                    )
+                ) {
+                    Text(it, modifier = Modifier.padding(8.dp), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (!(fineGranted.value || coarseGranted.value)) {
+                Card(
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+                    )
+                ) {
+                    Text(
+                        stringResource(R.string.location_permission_required),
+                        modifier = Modifier.padding(8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            } else if (!locationEnabled.value) {
+                Card(
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+                    )
+                ) {
+                    Text(
+                        stringResource(R.string.location_services_off),
+                        modifier = Modifier.padding(8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // CENTER ON ME FAB (bottom-left corner)
+        // ═══════════════════════════════════════════════════════════
+        FloatingActionButton(
+            onClick = {
+                refreshPermissionState()
+                if (!(fineGranted.value || coarseGranted.value)) {
+                    onRequestLocationPermission()
+                    return@FloatingActionButton
+                }
+
+                webViewRef?.let { onStartLocation(it) }
+
+                val coords = lastUserLatLon
+                if (coords != null) {
+                    // Update nearby route chips for this location
+                    routeVm.loadNearby(coords.first, coords.second)
+
+                    webViewRef?.evaluateJavascript("centerOnUser()", null)
+                    val p = PlaceResult(label = "My location", lat = coords.first, lon = coords.second)
+                    selectedPoint = p
+                    locVm.selectLocation(coords.first, coords.second)
+                    showReportDialog = true
+                } else {
+                    webViewRef?.evaluateJavascript("centerOnUser()", null)
+                }
+            },
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = 16.dp, bottom = 32.dp),
+            shape = CircleShape,
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+        ) {
+            Icon(Icons.Default.MyLocation, contentDescription = stringResource(R.string.action_center_on_me))
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // SEARCH RESULTS PANEL (bottom card, only when we have results)
+        // ═══════════════════════════════════════════════════════════
         if (places.isNotEmpty()) {
             Card(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .padding(8.dp),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
             ) {
                 LazyColumn(
                     modifier = Modifier
@@ -421,7 +599,9 @@ fun MapComposeScreen(
             }
         }
 
-        // --- Report dialog (Low/Medium/High) ---
+        // ═══════════════════════════════════════════════════════════
+        // TRAFFIC REPORT DIALOG (on map tap / location select)
+        // ═══════════════════════════════════════════════════════════
         if (showReportDialog) {
             val current = selectedPoint
             AlertDialog(
