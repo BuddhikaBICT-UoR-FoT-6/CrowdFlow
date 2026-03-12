@@ -44,7 +44,7 @@ class SettingsRepository(private val context: Context) {
             watchedRoutes = watched,
             severityThreshold = prefs[Keys.severityThreshold] ?: 4.0,
             refreshIntervalMinutes = prefs[Keys.refreshIntervalMinutes] ?: 15,
-            themeMode = ThemeMode.valueOf(prefs[Keys.themeMode] ?: ThemeMode.SYSTEM.name)
+            themeMode = ThemeMode.valueOf(prefs[Keys.themeMode] ?: ThemeMode.DARK.name)
         )
     }
 
