@@ -387,7 +387,7 @@ export async function getRecentRateLimitBlocks(limit = 200) {
  *   RL_LOGIN_POINTS, RL_LOGIN_DURATION
  *   RL_REGISTER_POINTS, RL_REGISTER_DURATION
  */
-const RL_LOGIN_POINTS = Number(process.env.RL_LOGIN_POINTS || '10');
+const RL_LOGIN_POINTS = Number(process.env.RL_LOGIN_POINTS || '5');
 const RL_LOGIN_DURATION = String(process.env.RL_LOGIN_DURATION || '15m');
 
 const RL_REGISTER_POINTS = Number(process.env.RL_REGISTER_POINTS || '5');
@@ -421,8 +421,8 @@ export const registerLimiter = RL_DISABLED
 export const trafficSamplesLimiter = RL_DISABLED
   ? (_req: Request, _res: Response, next: NextFunction) => next()
   : combinedIpAndIdentifierMiddleware(
-      { points: 200, duration: '1h' }, // per-IP global upper bound
-      { points: 60, duration: '1h' }, // per-user allowed submissions per hour
+      { points: 50, duration: '1m' }, // per-IP global upper bound
+      { points: 10, duration: '1m' }, // per-user allowed submissions per minute
       (req: Request) => {
         const anyUser: any = (req as any).user || {};
         return String(anyUser.id || anyUser.sub || req.ip || 'anon-user') || null;

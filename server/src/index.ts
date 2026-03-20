@@ -1,5 +1,7 @@
 // Load environment variables as early as possible
 require('dotenv').config();
+import { validateConfig } from './config';
+const cfg = validateConfig();
 
 import express = require('express');
 import type { Request, Response } from 'express';
@@ -8,7 +10,11 @@ import mongoose from 'mongoose';
 import axios from 'axios';
 import bcrypt = require('bcrypt');
 import { z } from 'zod';
-import { requireAuth, signAccessToken, type AuthedRequest, signRefreshToken, verifyRefreshToken, verifyTokenMiddleware, rotateRefreshToken, revokeRefreshTokenByJti, revokeAllTokensForUser } from './auth';
+import helmet from 'helmet';
+import compression = require('compression');
+import mongoSanitize = require('express-mongo-sanitize');
+import winston from 'winston';
+import { requireAuth, signAccessToken, type AuthedRequest, signRefreshToken, verifyRefreshToken, verifyTokenMiddleware, rotateRefreshToken, revokeAllTokensForUser, isAccountLocked, recordFailedLogin, clearLockout } from './auth';
 import { User, type UserRole } from './models/User';
 import { RefreshTokenModel } from './models/RefreshToken';
 import { requireRole } from './roles';
@@ -19,41 +25,76 @@ import trafficRoute from './routes/trafficRoute';
 import searchRoute from './routes/searchRoute';
 import osmRoutes from './routes/osmRoutes';
 import { startTomTomScheduler } from './tasks/tomtomScheduler';
+import { startAggregationCron } from './tasks/aggregationCron';
+import { internalOnly } from './middleware/internalOnly';
+import { TrafficQueryService } from './services/ITrafficQueryService';
+import { AggregationService } from './services/IAggregationService';
+
+const queryService = new TrafficQueryService();
+const aggregationService = new AggregationService();
+
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    process.env.NODE_ENV === 'production'
+      ? winston.format.json()
+      : winston.format.simple()
+  ),
+  transports: [new winston.transports.Console()],
+});
 
 
 const app = express();
+app.use(helmet());
+app.use(compression());
 app.use(cors());
 // Set a conservative global JSON body limit to protect against huge payloads (1MB)
 app.use(express.json({ limit: '1mb' }));
+app.use(mongoSanitize());
 
 // Respect proxy headers (X-Forwarded-For) when behind a proxy/load-balancer.
 // Set to true for generic setups; in production you may prefer a restricted list
 // of trusted proxies or IP ranges for tighter security.
 app.set('trust proxy', true);
 
+// HTTPS redirect in production
+if (cfg.NODE_ENV === 'production') {
+  app.use((req: Request, res: Response, next) => {
+    if (req.headers['x-forwarded-proto'] !== 'https') {
+      return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+  });
+}
+
 if(!process.env.REDIS_URL){
-  console.warn('WARNING: REDIS_URL is NOT configured — rate limiter will use in-memory fallback and duplicate detection will not work. Configure REDIS_URL for production.');
+  logger.warn('REDIS_URL is NOT configured — rate limiter will use in-memory fallback and duplicate detection will not work. Configure REDIS_URL for production.');
 }
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const TOMTOM_API_KEY = process.env.TOMTOM_API_KEY;
 
 if (!MONGODB_URI) {
-  console.error('Missing MONGODB_URI in environment');
+  logger.error('Missing MONGODB_URI in environment');
   process.exit(1);
 }
 
 if(!TOMTOM_API_KEY){
-    console.warn('WARNING: TOMTOM_API_KEY is NOT configured — TomTom debug route will not work. Configure TOMTOM_API_KEY for production.')
+  logger.warn('TOMTOM_API_KEY is NOT configured — TomTom debug route will not work. Configure TOMTOM_API_KEY for production.');
 }
 
 // Mongo connection
 mongoose.set('strictQuery', true);
 mongoose
   .connect(MONGODB_URI)
-  .then(() => console.log('MongoDB connected'))
+  .then(() => {
+    logger.info('MongoDB connected');
+    startAggregationCron();
+  })
   .catch((err) => {
-    console.error('MongoDB connection error:', err);
+    logger.error('MongoDB connection error', { err });
     process.exit(1);
   });
 
@@ -68,12 +109,15 @@ const SampleSchema = new mongoose.Schema(
     severity: { type: Number, required: true, min: 0, max: 5 },
     reportedAtMs: { type: Number, required: true, index: true },
     userIdHash: { type: String },
-    lat: { type: Number },
-    lon: { type: Number },
+    location: {
+      type: { type: String, enum: ['Point'] },
+      coordinates: { type: [Number] }
+    },
     createdAt: { type: Date, required: true, default: () => new Date(), index: true },
   },
   { timestamps: false, versionKey: false }
 );
+SampleSchema.index({ location: '2dsphere' });
 // TTL index to automatically remove old samples
 if (SAMPLE_RETENTION_DAYS > 0) {
   const seconds = SAMPLE_RETENTION_DAYS * 24 * 60 * 60;
@@ -122,11 +166,15 @@ const aggregateWindowSchema = z.object({
 const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
+  deviceId: z.string().min(1),
+  deviceName: z.string().optional(),
 });
 
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  deviceId: z.string().min(1),
+  deviceName: z.string().optional(),
 });
 
 const refreshSchema = z.object({
@@ -183,10 +231,9 @@ async function fetchTomTomFlow(lat: number, lon: number){
 // Export helper for aggregator scripts
 export { computeStats };
 
-// Health check (useful for emulator connectivity testing)
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ ok: true });
-});
+// Health check endpoints
+app.get('/health', (_req: Request, res: Response) => res.json({ ok: true }));
+app.get('/healthz', (_req: Request, res: Response) => res.json({ ok: true, uptime: process.uptime() }));
 
 // Mount TomTom debug route (provides GET /api/v1/debug/provider/point)
 app.use(tomtomDebugRoute);
@@ -200,7 +247,7 @@ app.use(osmRoutes);
 // --- Auth routes ---
 app.post('/api/v1/auth/register', registerLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password } = registerSchema.parse(req.body);
+    const { email, password, deviceId, deviceName } = registerSchema.parse(req.body);
 
     const existing = await User.findOne({ email: email.toLowerCase() }).lean();
     if (existing) {
@@ -210,12 +257,8 @@ app.post('/api/v1/auth/register', registerLimiter, async (req: Request, res: Res
     const passwordHash = await bcrypt.hash(password, 12);
     const created = await User.create({ email: email.toLowerCase(), passwordHash, role: 'user' as UserRole });
 
-    // Enforce single-active-refresh-token: revoke any previous tokens linked to this user (precaution)
-    await revokeAllTokensForUser(String(created._id));
-
     const accessToken = signAccessToken({ id: String(created._id), email: created.email, role: String(created.get('role')) as UserRole });
-    const { token: refreshToken } = await signRefreshToken(String(created._id));
-    // don't store per-user hashed refreshToken - using RefreshTokenModel as source of truth
+    const refreshToken = await signRefreshToken(String(created._id), deviceId, deviceName);
 
     return res.status(201).json({
       ok: true,
@@ -226,35 +269,45 @@ app.post('/api/v1/auth/register', registerLimiter, async (req: Request, res: Res
       },
     });
   } catch (e: any) {
-    console.error('/auth/register error', e);
+    logger.error('/auth/register error', { err: e });
     return res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
   }
 });
 
 app.post('/api/v1/auth/login', loginLimiter, async (req: Request, res: Response) => {
   try {
-    const { email, password } = loginSchema.parse(req.body);
+    const { email, password, deviceId, deviceName } = loginSchema.parse(req.body);
 
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
+      await recordFailedLogin(email);
       return res.status(401).json({ ok: false, error: 'Invalid email or password' });
+    }
+
+    if (await isAccountLocked(email)) {
+      return res.status(429).json({ ok: false, error: 'Account temporarily locked due to too many failed attempts' });
     }
 
     const ok = await bcrypt.compare(password, String(user.get('passwordHash')));
     if (!ok) {
+      await recordFailedLogin(email);
       return res.status(401).json({ ok: false, error: 'Invalid email or password' });
     }
+    await clearLockout(email);
 
-    // Revoke existing refresh tokens for this user to enforce single-active-token policy
-    await revokeAllTokensForUser(String(user._id));
+    // Enforce max 5 concurrent sessions per user
+    const existingSessions = await RefreshTokenModel.find({ userId: String(user._id) }).lean();
+    const otherSessions = existingSessions.filter(s => s.deviceId !== deviceId);
+    if (otherSessions.length >= 5) {
+      return res.status(429).json({ ok: false, error: 'Maximum of 5 concurrent sessions reached' });
+    }
 
     const accessToken = signAccessToken({
       id: String(user._id),
       email: String(user.get('email')),
       role: String(user.get('role') || 'user') as UserRole,
     });
-    const { token: refreshToken } = await signRefreshToken(String(user._id));
-    // don't store per-user hashed refreshToken - using RefreshTokenModel as source of truth
+    const refreshToken = await signRefreshToken(String(user._id), deviceId, deviceName);
 
     return res.json({
       ok: true,
@@ -265,7 +318,7 @@ app.post('/api/v1/auth/login', loginLimiter, async (req: Request, res: Response)
       },
     });
   } catch (e: any) {
-    console.error('/auth/login error', e);
+    logger.error('/auth/login error', { err: e });
     return res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
   }
 });
@@ -275,13 +328,12 @@ app.post('/api/v1/auth/refresh', async (req: Request, res: Response) => {
     const { refreshToken } = refreshSchema.parse(req.body);
     const decoded = await verifyRefreshToken(refreshToken);
 
-    const user = await User.findById(decoded.sub);
+    const user = await User.findById(decoded.userId);
     if (!user) {
       return res.status(401).json({ ok: false, error: 'Invalid refresh token' });
     }
 
-    // rotate: will verify+revoke old and issue a new refresh token
-    const newRefreshToken = await rotateRefreshToken(refreshToken, { ip: req.ip, ua: req.headers['user-agent'] });
+    const newRefreshToken = await rotateRefreshToken(refreshToken);
 
     const accessToken = signAccessToken({
       id: String(user._id),
@@ -291,7 +343,7 @@ app.post('/api/v1/auth/refresh', async (req: Request, res: Response) => {
 
     return res.json({ ok: true, data: { accessToken, refreshToken: newRefreshToken } });
   } catch (e: any) {
-    console.error('/auth/refresh error', e);
+    logger.error('/auth/refresh error', { err: e });
     return res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
   }
 });
@@ -300,20 +352,51 @@ app.post('/api/v1/auth/logout', requireAuth, async (req: AuthedRequest, res: Res
   try {
     const { refreshToken } = req.body || {};
     if (refreshToken) {
-      // try to revoke by jti from token
       try {
-        const decoded = await verifyRefreshToken(refreshToken);
-        await revokeRefreshTokenByJti(decoded.jti);
+        const { userId, deviceId } = await verifyRefreshToken(refreshToken);
+        if (userId === req.user!.sub) {
+          await RefreshTokenModel.deleteOne({ userId, deviceId });
+        }
       } catch (e) {
         // ignore invalid token
       }
-    } else {
-      // If no token supplied, revoke all tokens for the current user (optional behavior)
-      await RefreshTokenModel.updateMany({ userId: req.user!.sub }, { $set: { revoked: true } });
     }
     return res.json({ ok: true });
   } catch (e: any) {
-    console.error('/auth/logout error', e);
+    logger.error('/auth/logout error', { err: e });
+    return res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
+  }
+});
+
+app.post('/api/v1/auth/logout-all', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    await RefreshTokenModel.deleteMany({ userId: req.user!.sub });
+    return res.json({ ok: true });
+  } catch (e: any) {
+    logger.error('/auth/logout-all error', { err: e });
+    return res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
+  }
+});
+
+app.get('/api/v1/auth/sessions', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const sessions = await RefreshTokenModel.find({ userId: req.user!.sub })
+      .select('deviceId deviceName issuedAt lastUsedAt -_id')
+      .lean();
+    return res.json({ ok: true, data: sessions });
+  } catch (e: any) {
+    logger.error('/auth/sessions error', { err: e });
+    return res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
+  }
+});
+
+app.delete('/api/v1/auth/sessions/:deviceId', requireAuth, async (req: AuthedRequest, res: Response) => {
+  try {
+    const { deviceId } = req.params;
+    await RefreshTokenModel.deleteOne({ userId: req.user!.sub, deviceId });
+    return res.json({ ok: true });
+  } catch (e: any) {
+    logger.error('/auth/sessions DELETE error', { err: e });
     return res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
   }
 });
@@ -351,7 +434,7 @@ app.post('/api/v1/admin/users', requireAuth, requireRole(['admin', 'superadmin']
       data: { id: String(created._id), email: String(created.get('email')), role: String(created.get('role')) },
     });
   } catch (e: any) {
-    console.error('/admin/users POST error', e);
+    logger.error('/admin/users POST error', { err: e });
     return res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
   }
 });
@@ -373,7 +456,7 @@ app.patch('/api/v1/admin/users/:id/role', requireAuth, requireRole(['superadmin'
 
     return res.json({ ok: true, data: { id: String(updated._id), email: String(updated.get('email')), role: String(updated.get('role')) } });
   } catch (e: any) {
-    console.error('/admin/users/:id/role PATCH error', e);
+    logger.error('/admin/users/:id/role PATCH error', { err: e });
     return res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
   }
 });
@@ -384,7 +467,7 @@ app.get('/api/v1/admin/rate-limits', requireAuth, requireRole(['superadmin']), a
     const items = await getRecentRateLimitBlocks(200);
     return res.json({ ok: true, data: items });
   } catch (e: any) {
-    console.error('/admin/rate-limits error', e);
+    logger.error('/admin/rate-limits error', { err: e });
     return res.status(500).json({ ok: false, error: 'Failed to fetch rate-limit blocks' });
   }
 });
@@ -395,7 +478,7 @@ app.get('/api/v1/admin/blocks', requireAuth, requireRole(['superadmin']), async 
     const items = await listBlockedKeys(200);
     return res.json({ ok: true, data: items });
   } catch (e: any) {
-    console.error('/admin/blocks error', e);
+    logger.error('/admin/blocks error', { err: e });
     return res.status(500).json({ ok: false, error: 'Failed to list blocked keys' });
   }
 });
@@ -409,7 +492,7 @@ app.delete('/api/v1/admin/blocks/:key', requireAuth, requireRole(['superadmin'])
     if (!ok) return res.status(404).json({ ok: false, error: 'Key not found or removal failed' });
     return res.json({ ok: true });
   } catch (e: any) {
-    console.error('/admin/blocks DELETE error', e);
+    logger.error('/admin/blocks DELETE error', { err: e });
     return res.status(500).json({ ok: false, error: 'Failed to remove block' });
   }
 });
@@ -437,68 +520,50 @@ app.post(
       const parsed: any[] = [];
       for (const s of samplesArray) {
         const p = submitSampleSchema.parse(s);
-        parsed.push(p);
+        const mapped: any = { ...p };
+        if (p.lat != null && p.lon != null) {
+            mapped.location = { type: 'Point', coordinates: [p.lon, p.lat] };
+            delete mapped.lat;
+            delete mapped.lon;
+        }
+        parsed.push(mapped);
       }
 
       // Bulk insert
       await Sample.insertMany(parsed, { ordered: false });
       res.status(201).json({ ok: true, inserted: parsed.length });
     } catch (e: any) {
-      console.error('/samples error', e);
-      // Zod validation errors will be caught here
+      logger.error('/samples error', { err: e });
       res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
     }
   },
 );
 
 
-app.post('/api/v1/aggregate', requireAuth, async (req: AuthedRequest, res: Response) => {
+app.post('/api/v1/aggregate', requireAuth, internalOnly, async (req: AuthedRequest, res: Response) => {
   try {
     const { routeId, windowStartMs, segmentId } = aggregateWindowSchema.parse(req.body);
 
-    const samples = await Sample.find({ routeId, windowStartMs, segmentId }).select('severity');
-    if (samples.length === 0) {
+    const doc = await aggregationService.aggregateWindow(routeId, windowStartMs, segmentId);
+    if (!doc) {
       return res.json({ ok: true, message: 'No samples to aggregate' });
     }
-    const severities = samples.map((s) => Number(s.severity));
-    const stats = computeStats(severities);
-
-    const doc = {
-      routeId,
-      windowStartMs,
-      segmentId,
-      severityAvg: stats.avg,
-      severityP50: stats.p50,
-      severityP90: stats.p90,
-      sampleCount: stats.count,
-      lastAggregatedAtMs: Date.now(),
-    };
-
-    await Aggregate.updateOne(
-      { routeId, windowStartMs, segmentId },
-      { $set: doc },
-      { upsert: true }
-    );
-
     res.json({ ok: true, data: doc });
   } catch (e: any) {
-    console.error('/aggregate error', e);
+    logger.error('/aggregate error', { err: e });
     res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
   }
 });
 
 app.get('/api/v1/aggregates', requireAuth, async (req: AuthedRequest, res: Response) => {
   try {
-    const routeId = String(req.query.routeId || '').trim();
-    const windowStartMs = Number(req.query.windowStartMs || 0);
-    if (!routeId || !Number.isFinite(windowStartMs) || windowStartMs <= 0) {
-      return res.status(400).json({ ok: false, error: 'Invalid parameters' });
-    }
-
-    const results = await Aggregate.find({ routeId, windowStartMs }).lean();
+    const routeId = req.query.routeId ? String(req.query.routeId).trim() : undefined;
+    const windowStartMs = req.query.windowStartMs ? Number(req.query.windowStartMs) : undefined;
+    
+    const results = await queryService.getAggregates(routeId, windowStartMs);
     res.json({ ok: true, data: results });
   } catch (e: any) {
-    console.error('/aggregates error', e);
+    logger.error('/aggregates error', { err: e });
     res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
   }
 });
@@ -514,7 +579,7 @@ app.post('/api/v1/report', async (req: Request, res: Response) => {
     await Sample.create(p);
     return res.status(201).json({ ok: true, inserted: 1 });
   } catch (e: any) {
-    console.error('/api/v1/report error', e?.message || e);
+    logger.error('/api/v1/report error', { err: e });
     return res.status(400).json({ ok: false, error: e?.message || 'Bad Request' });
   }
 });
@@ -528,16 +593,15 @@ if (require.main === module) {
   const HOST = process.env.HOST || '0.0.0.0';
 
   const server = app.listen(PORT, HOST, () => {
-    console.log(`Server listening on http://${HOST}:${PORT}`);
+    logger.info(`Server listening on http://${HOST}:${PORT}`);
   });
 
   server.on('error', (err: any) => {
     if (err && err.code === 'EADDRINUSE') {
-      console.error(`Port ${PORT} is already in use. Stop the existing process or start with a different PORT.`);
-      console.error('Example: set PORT=3001 then run npm start');
+      logger.error(`Port ${PORT} is already in use. Stop the existing process or start with a different PORT.`);
       process.exit(1);
     }
-    console.error('Server failed to start:', err);
+    logger.error('Server failed to start', { err });
     process.exit(1);
   });
 }
@@ -571,19 +635,24 @@ app.post(
       const parsed: any[] = [];
       for (const s of samplesArray) {
         const p = submitSampleSchema.parse(s);
-        // Prefer explicit userIdHash from payload; if missing, attach authenticated user id
-        if (!p.userIdHash && req.user && req.user.sub) {
-          p.userIdHash = String(req.user.sub);
+        const mapped: any = { ...p };
+        if (p.lat != null && p.lon != null) {
+            mapped.location = { type: 'Point', coordinates: [p.lon, p.lat] };
+            delete mapped.lat;
+            delete mapped.lon;
         }
-        parsed.push(p);
+        // Prefer explicit userIdHash from payload; if missing, attach authenticated user id
+        if (!mapped.userIdHash && req.user && req.user.sub) {
+          mapped.userIdHash = String(req.user.sub);
+        }
+        parsed.push(mapped);
       }
 
       // Bulk insert into samples collection
       await Sample.insertMany(parsed, { ordered: false });
       res.status(201).json({ ok: true, inserted: parsed.length });
     } catch (e: any) {
-      console.error('/traffic/samples error', e);
-      // Zod validation errors or other issues
+      logger.error('/traffic/samples error', { err: e });
       res.status(400).json({ ok: false, error: e.message ?? 'Bad Request' });
     }
   },
@@ -614,7 +683,7 @@ app.get('/api/v1/debug/provider/point', async (req, res) => {
         return res.json({ ok: true, provider: raw, mapped: { speedKmph: speed, severity }});
 
     } catch(e: any){
-        console.error('/debug/provider/point error', e?.message || e);
+        logger.error('/debug/provider/point error', { err: e });
         return res.status(400).json({ok: false, error: e?.message || 'Bad Request'});
     }
 });
@@ -624,8 +693,8 @@ app.get('/api/v1/debug/provider/point', async (req, res) => {
 if (process.env.ENABLE_TOMTOM_SCHEDULER === 'true') {
   try {
     startTomTomScheduler();
-    console.log('TomTom scheduler enabled');
+    logger.info('TomTom scheduler enabled');
   } catch (e) {
-    console.error('Failed to start TomTom scheduler', (e as any)?.message || e);
+    logger.error('Failed to start TomTom scheduler', { err: e });
   }
 }

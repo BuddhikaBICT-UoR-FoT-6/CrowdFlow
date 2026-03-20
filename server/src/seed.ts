@@ -15,10 +15,10 @@ async function main() {
   await mongoose.connect(MONGODB_URI);
 
   const users: Array<{ email: string; password: string; role: UserRole }> = [
-    { email: 'superadmin@ceylonqueue.com', password: 'SuperAdmin@123', role: 'superadmin' },
-    { email: 'admin@ceylonqueue.com', password: 'Admin@12345', role: 'admin' },
-    { email: 'user1@ceylonqueue.com', password: 'User@12345', role: 'user' },
-    { email: 'user2@ceylonqueue.com', password: 'User@12345', role: 'user' },
+    { email: 'superadmin@waywatch.app', password: 'SuperAdmin@123', role: 'superadmin' },
+    { email: 'admin@waywatch.app', password: 'Admin@12345', role: 'admin' },
+    { email: 'user1@waywatch.app', password: 'User@12345', role: 'user' },
+    { email: 'user2@waywatch.app', password: 'User@12345', role: 'user' },
   ];
 
   for (const u of users) {
