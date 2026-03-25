@@ -1,6 +1,6 @@
-package com.example.ceylonqueuebuspulse
+package com.example.waywatch
 
-import com.example.ceylonqueuebuspulse.data.network.model.TrafficReportDto
+import com.example.waywatch.data.network.model.TrafficReportDto
 import com.squareup.moshi.JsonDataException
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types

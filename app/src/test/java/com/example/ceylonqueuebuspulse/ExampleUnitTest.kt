@@ -1,4 +1,4 @@
-package com.example.ceylonqueuebuspulse
+package com.example.waywatch
 
 import org.junit.Test
 

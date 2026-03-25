@@ -1,9 +1,9 @@
-package com.example.ceylonqueuebuspulse.traffic
+package com.example.waywatch.traffic
 
-import com.example.ceylonqueuebuspulse.data.network.DebugApi
-import com.example.ceylonqueuebuspulse.data.network.model.ApiResponse
-import com.example.ceylonqueuebuspulse.data.repository.AppResult
-import com.example.ceylonqueuebuspulse.data.repository.TrafficAggregationRepository
+import com.example.waywatch.data.network.DebugApi
+import com.example.waywatch.data.network.model.ApiResponse
+import com.example.waywatch.data.repository.AppResult
+import com.example.waywatch.data.repository.TrafficAggregationRepository
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk

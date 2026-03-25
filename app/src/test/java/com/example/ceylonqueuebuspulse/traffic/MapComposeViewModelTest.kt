@@ -1,10 +1,10 @@
-package com.example.ceylonqueuebuspulse.traffic
+package com.example.waywatch.traffic
 
-import com.example.ceylonqueuebuspulse.data.network.TomTomAddress
-import com.example.ceylonqueuebuspulse.data.network.TomTomPosition
-import com.example.ceylonqueuebuspulse.data.network.TomTomSearchApi
-import com.example.ceylonqueuebuspulse.data.network.TomTomSearchResponse
-import com.example.ceylonqueuebuspulse.data.network.TomTomSearchResult
+import com.example.waywatch.data.network.TomTomAddress
+import com.example.waywatch.data.network.TomTomPosition
+import com.example.waywatch.data.network.TomTomSearchApi
+import com.example.waywatch.data.network.TomTomSearchResponse
+import com.example.waywatch.data.network.TomTomSearchResult
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
