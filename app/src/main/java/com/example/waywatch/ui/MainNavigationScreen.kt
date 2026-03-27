@@ -8,6 +8,7 @@ import androidx.compose.material.icons.filled.Map
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.example.waywatch.settings.SettingsViewModel
 import com.example.waywatch.traffic.LocationTrafficViewModel
 import com.example.waywatch.traffic.MapComposeScreen

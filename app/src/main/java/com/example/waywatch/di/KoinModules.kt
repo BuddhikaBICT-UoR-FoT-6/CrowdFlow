@@ -20,6 +20,7 @@ import com.example.waywatch.traffic.MapComposeViewModel
 import com.example.waywatch.traffic.LocationTrafficViewModel
 import com.example.waywatch.traffic.RouteCatalogViewModel
 import com.example.waywatch.ui.account.AccountViewModel
+import com.example.waywatch.util.ConnectivityMonitor
 import com.example.waywatch.util.RetryPolicy
 import com.example.waywatch.work.AggregationPlannerWorker
 import com.example.waywatch.work.MongoAggregationSyncWorker

@@ -54,16 +54,16 @@ class TrafficViewModel(
         _errorMessage,
         _isSyncing,
         _lastUpdatedMs
-    ) { reports, aggregates, routeId, isLoading, errorMsg, isSyncing, lastUpdated ->
+    ) { args ->
         @Suppress("UNCHECKED_CAST")
         UiState(
-            reports = reports as List<com.example.waywatch.data.TrafficReport>,
-            aggregatedData = aggregates as List<AggregatedTrafficEntity>,
-            selectedRouteId = routeId as String,
-            isLoading = isLoading as Boolean,
-            errorMessage = errorMsg as String?,
-            isSyncing = isSyncing as Boolean,
-            lastUpdatedMs = lastUpdated as Long?
+            reports = args[0] as List<com.example.waywatch.data.TrafficReport>,
+            aggregatedData = args[1] as List<AggregatedTrafficEntity>,
+            selectedRouteId = args[2] as String,
+            isLoading = args[3] as Boolean,
+            errorMessage = args[4] as String?,
+            isSyncing = args[5] as Boolean,
+            lastUpdatedMs = args[6] as Long?
         )
     }.stateIn(
         scope = viewModelScope,

@@ -64,8 +64,8 @@ class TrafficAggregationRepository(
      * Fetch latest aggregates from remote and upsert into Room.
      * Room remains the source of truth.
      */
-    suspend fun getAggregates(routeId: String? = null): AppResult<List<com.example.waywatch.data.network.model.AggregateDto>> =
-        try {
+    suspend fun getAggregates(routeId: String? = null): AppResult<List<com.example.waywatch.data.network.model.AggregateDto>> {
+        return try {
                 val resp = mongoApi.getAggregates(routeId = routeId)
                 if (!resp.ok) {
                     return AppResult.Err(AppError.Server(resp.error ?: resp.message ?: "Sync failed"))
@@ -110,4 +110,5 @@ class TrafficAggregationRepository(
             } catch (t: Throwable) {
                 AppResult.Err(RepositoryErrorMapper.toAppError(t))
             }
+    }
 }

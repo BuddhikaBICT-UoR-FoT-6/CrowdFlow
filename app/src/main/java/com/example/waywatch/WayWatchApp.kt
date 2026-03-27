@@ -29,7 +29,7 @@ class WayWatchApp : Application() {
         } catch (_: Throwable) {}
 
         try {
-            val logger = analytics.FirebaseAnalyticsLogger()
+            val logger = com.example.waywatch.analytics.FirebaseAnalyticsLogger()
             logger.logEvent("app_start", mapOf("buildType" to BuildConfig.BUILD_TYPE))
         } catch (_: Throwable) {}
 

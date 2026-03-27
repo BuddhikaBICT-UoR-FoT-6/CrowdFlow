@@ -55,10 +55,9 @@ import com.example.waywatch.ui.theme.waywatchTheme
 import com.example.waywatch.ui.TrafficViewModel
 import com.example.waywatch.ui.auth.AuthScreen
 import com.example.waywatch.ui.auth.AuthViewModel
-
-import com.example.waywatch.ui.auth.AuthViewModel
-
 import androidx.compose.ui.graphics.Color
+
+private enum class SortMode { NEWEST, OLDEST, HIGHEST_SEVERITY }
 
 // Entry point Activity. Hosts the Compose UI and connects it to the ViewModel.
 class MainActivity : ComponentActivity() {
