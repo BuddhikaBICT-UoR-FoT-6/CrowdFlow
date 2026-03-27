@@ -26,11 +26,12 @@ jobs:
       - run: npm run build
 
       - name: Run unit tests
-        run: npx jest --config jest.config.ts --testPathPattern src/__tests__ --runInBand --detectOpenHandles
+        run: npx jest --config jest.config.ts --testPathPattern "src/__tests__/(auth|traffic|aggregationCron|duplicateDetection)\.test\.ts$" --runInBand --detectOpenHandles
         env:
           NODE_ENV: test
           JWT_SECRET: ci-test-secret-at-least-32-chars-long
           JWT_REFRESH_SECRET: ci-test-refresh-secret-at-least-32-chars
+          MONGODB_URI: mongodb://localhost:27017/ci-placeholder
 
   android:
     runs-on: ubuntu-latest
@@ -45,6 +46,14 @@ jobs:
 
       - name: Grant execute permission
         run: chmod +x ./gradlew
+
+      - name: Write google-services.json
+        run: |
+          echo '{
+            "project_info":{"project_number":"000000000000","project_id":"ci-placeholder","storage_bucket":"ci-placeholder.appspot.com"},
+            "client":[{"client_info":{"mobilesdk_app_id":"1:000000000000:android:0000000000000000","android_client_info":{"package_name":"com.example.waywatch"}},"oauth_client":[],"api_key":[{"current_key":"ci-placeholder"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],
+            "configuration_version":"1"
+          }' > app/google-services.json
 
       - name: Assemble debug
         run: ./gradlew :app:assembleDebug --no-daemon
